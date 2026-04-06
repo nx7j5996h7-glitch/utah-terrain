@@ -9,15 +9,15 @@
  *   B: Special terrain feature index (0=none, 1-5)
  *   A: Snow cover (0-255, based on elevation)
  *
- * Uses the same grid dimensions as the hex map (MAP_WIDTH x MAP_HEIGHT) so
+ * Uses the same grid dimensions as the hex map (GRID_COLS x GRID_ROWS) so
  * each pixel corresponds to one hex tile at (q, r).
  */
 
 import * as THREE from 'three';
 import { GameMap } from '@/core/map/GameMap';
-import { MAP_WIDTH, MAP_HEIGHT } from '@/constants';
 import { REGION_TINT, RANGE_RIDGE_ANGLES } from './RegionalMappings';
 import { MOUNTAIN_RANGES } from '@/data/mountains';
+import { GRID_COLS, GRID_ROWS } from '@/core/map/UtahMapData';
 
 // ─── Point-in-polygon for mountain range detection ─────────────────────────
 export function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {
@@ -36,11 +36,11 @@ export class RegionalFeatureMap {
   private texture: THREE.DataTexture | null = null;
 
   build(gameMap: GameMap): void {
-    const data = new Uint8Array(MAP_WIDTH * MAP_HEIGHT * 4);
+    const data = new Uint8Array(GRID_COLS * GRID_ROWS * 4);
 
     for (const tile of gameMap.getAllTiles()) {
-      const idx = (tile.r * MAP_WIDTH + tile.q) * 4;
-      if (tile.q < 0 || tile.q >= MAP_WIDTH || tile.r < 0 || tile.r >= MAP_HEIGHT) continue;
+      const idx = (tile.r * GRID_COLS + tile.q) * 4;
+      if (tile.q < 0 || tile.q >= GRID_COLS || tile.r < 0 || tile.r >= GRID_ROWS) continue;
 
       // R: ridge angle
       // Check which mountain range this tile belongs to
@@ -65,7 +65,7 @@ export class RegionalFeatureMap {
     }
 
     if (this.texture) this.texture.dispose();
-    this.texture = new THREE.DataTexture(data, MAP_WIDTH, MAP_HEIGHT, THREE.RGBAFormat);
+    this.texture = new THREE.DataTexture(data, GRID_COLS, GRID_ROWS, THREE.RGBAFormat);
     this.texture.magFilter = THREE.NearestFilter;
     this.texture.minFilter = THREE.NearestFilter;
     this.texture.needsUpdate = true;
@@ -73,7 +73,7 @@ export class RegionalFeatureMap {
 
   getTexture(): THREE.DataTexture | null { return this.texture; }
 
-  getSize(): THREE.Vector2 { return new THREE.Vector2(MAP_WIDTH, MAP_HEIGHT); }
+  getSize(): THREE.Vector2 { return new THREE.Vector2(GRID_COLS, GRID_ROWS); }
 
   dispose(): void {
     if (this.texture) { this.texture.dispose(); this.texture = null; }

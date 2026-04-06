@@ -5,8 +5,7 @@
 
 import { CITIES } from '@/data/cities';
 import { PARKS } from '@/data/parks';
-import { hexToPixel } from '@/core/hex/HexUtils';
-import { HEX_SIZE, UTAH_WEST, UTAH_NORTH, DEG_PER_HEX_LON, DEG_PER_HEX_LAT } from '@/constants';
+import { geoToWorld } from '@/core/geo/GeoCoord';
 import type { GameMap } from '@/core/map/GameMap';
 
 type FlyToFn = (worldX: number, worldZ: number) => void;
@@ -45,14 +44,6 @@ const LANDMARKS: { name: string; lon: number; lat: number; hint: string }[] = [
   { name: 'Fish Lake',              lon: -111.720, lat: 38.550, hint: 'High plateau lake' },
   { name: 'Coral Pink Sand Dunes',  lon: -112.730, lat: 37.030, hint: 'Aeolian dunes' },
 ];
-
-/** Convert geo (lon, lat) to world coordinates via hex grid. */
-function geoToWorld(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  const pixel = hexToPixel({ q, r }, HEX_SIZE);
-  return { x: pixel.x, z: -pixel.y };
-}
 
 /** Polygon centroid (simple average of vertices). */
 function polygonCentroid(polygon: [number, number][]): { lon: number; lat: number } {

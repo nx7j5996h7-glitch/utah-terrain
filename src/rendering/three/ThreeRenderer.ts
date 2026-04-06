@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import type { TerrainType } from '@/constants';
 import {
-  HEX_SIZE,
-  MAP_WIDTH,
-  MAP_HEIGHT,
   MAX_RENDER_SCALE,
   MAX_DPR,
 } from '@/constants';

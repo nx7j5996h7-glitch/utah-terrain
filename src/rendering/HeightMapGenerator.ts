@@ -6,7 +6,8 @@
  * Adapted from Aveneg's HeightMapGenerator for Utah's terrain palette.
  */
 
-import { GLOBAL_TERRAIN_SEED, HEX_SIZE, UTAH_WEST, UTAH_NORTH, DEG_PER_HEX_LON, DEG_PER_HEX_LAT, ELEVATION_SCALE } from '@/constants';
+import { GLOBAL_TERRAIN_SEED, ELEVATION_SCALE } from '@/constants';
+import { worldToGeo } from '@/core/geo/GeoCoord';
 import type { TerrainType } from '@/constants';
 import {
   ridgedNoise2D,
@@ -28,14 +29,6 @@ const LIGHT_Y = 180 / 280;
 const INV_SQRT_LIGHT = 1 / Math.sqrt(LIGHT_X * LIGHT_X + LIGHT_Y * LIGHT_Y + 1);
 
 const SQRT3 = Math.sqrt(3);
-const SQRT3_HALF = SQRT3 / 2;
-
-function hexToWorld(q: number, r: number): { wx: number; wy: number } {
-  return {
-    wx: -HEX_SIZE * 1.5 * q,
-    wy: HEX_SIZE * (SQRT3_HALF * q + SQRT3 * r),
-  };
-}
 
 // Unique seed offsets per terrain to avoid cross-terrain correlation
 const TERRAIN_SEED_OFFSETS: Record<string, number> = {
@@ -348,18 +341,7 @@ function sampleDesertHeight(worldX: number, worldY: number, terrainType: Terrain
 // Real heightmap sampling — world coords to real USGS elevation
 // =========================================================================
 
-/**
- * Convert world-space coordinates back to geographic (lon/lat).
- * Inverse of hexToWorld + geoToHex mapping used by UtahMapData.
- */
-function worldToGeo(wx: number, wy: number): { lon: number; lat: number } {
-  const q = -wx / (HEX_SIZE * 1.5); // negated to match hexToPixel's negated x
-  const r = wy / (HEX_SIZE * SQRT3) - q / 2;
-  return {
-    lon: UTAH_WEST + q * DEG_PER_HEX_LON,
-    lat: UTAH_NORTH - r * DEG_PER_HEX_LAT,
-  };
-}
+// worldToGeo is imported from @/core/geo/GeoCoord
 
 /**
  * Get terrain height from real USGS heightmap data + micro-detail noise.
@@ -374,7 +356,8 @@ function worldToGeo(wx: number, wy: number): { lon: number; lat: number } {
 function sampleRealHeight(worldX: number, worldY: number): number {
   if (!isHeightmapLoaded()) return 0;
 
-  const geo = worldToGeo(worldX, worldY);
+  // worldY is pixel-Y (positive south), worldZ = -pixelY
+  const geo = worldToGeo(worldX, -worldY);
   const realElev = sampleElevationGeo(geo.lon, geo.lat);
   if (realElev === undefined) return 0;
 

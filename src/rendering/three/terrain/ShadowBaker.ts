@@ -1,22 +1,11 @@
 import * as THREE from 'three';
 import type { GameMap } from '@/core/map/GameMap';
-import { hexToPixel } from '@/core/hex/HexUtils';
-import { HEX_SIZE, MAP_WIDTH, MAP_HEIGHT, GLOBAL_TERRAIN_SEED } from '@/constants';
+import { computeWorldBounds } from '@/core/geo/GeoCoord';
+import { GLOBAL_TERRAIN_SEED } from '@/constants';
 import { fbm2D } from '@/rendering/ProceduralNoise';
-
-// ---------------------------------------------------------------------------
-// ShadowBaker — bakes sun shadows, ambient occlusion, and detail noise
-// into an RGBA DataTexture for the terrain fragment shader.
-//
-//   R: sun shadow factor  (0 = dark, 255 = lit)
-//   G: ambient occlusion  (0 = occluded, 255 = open)
-//   B: detail noise        (128 = neutral, varies +/-)
-//   A: 255
-// ---------------------------------------------------------------------------
 
 const RESOLUTION = 512;
 
-// Shadow raymarch
 const SHADOW_STEPS = 20;
 const SHADOW_TOTAL_DIST = 300;
 const SHADOW_STEP_SIZE = SHADOW_TOTAL_DIST / SHADOW_STEPS;
@@ -24,27 +13,14 @@ const PENUMBRA_SAMPLES = 2;
 const PENUMBRA_RADIUS = 10;
 const SHADOW_MIN_BRIGHTNESS = 0.55;
 
-// AO hemisphere
 const AO_RAYS = 6;
 const AO_STEPS = 4;
 const AO_RADIUS = 30;
 const AO_MIN = 0.50;
 const AO_BIAS = 0.3;
 
-// Detail noise
 const DETAIL_SCALES = [0.12, 0.35, 0.8];
 const DETAIL_AMP = 20;
-
-/** Compute the world-space bounding box of the hex map. */
-function computeWorldBounds(): { minX: number; minZ: number; maxX: number; maxZ: number } {
-  const origin = hexToPixel({ q: 0, r: 0 }, HEX_SIZE);
-  const corner = hexToPixel({ q: MAP_WIDTH - 1, r: MAP_HEIGHT - 1 }, HEX_SIZE);
-  const minX = Math.min(origin.x, corner.x) - HEX_SIZE;
-  const maxX = Math.max(origin.x, corner.x) + HEX_SIZE;
-  const minY = Math.min(origin.y, corner.y) - HEX_SIZE;
-  const maxY = Math.max(origin.y, corner.y) + HEX_SIZE;
-  return { minX, minZ: -maxY, maxX, maxZ: -minY };
-}
 
 export class ShadowBaker {
   private texture: THREE.DataTexture | null = null;

@@ -16,12 +16,10 @@
 
 import * as THREE from 'three';
 import { GameMap } from '@/core/map/GameMap';
-import { hexToPixel, pixelToHex } from '@/core/hex/HexUtils';
-import { hexNeighbor } from '@/core/hex/HexCoord';
-import type { Tile } from '@/core/map/Tile';
+import { geoToWorld, worldToGeo, computeWorldBounds } from '@/core/geo/GeoCoord';
+import { sampleTerrainAt, type TerrainProperties } from '@/core/map/UtahMapData';
 import type { TerrainType } from '@/constants';
 import {
-  HEX_SIZE,
   ELEVATION_SCALE,
   MOUNTAIN_HEIGHT_BOOST,
   GRID_SPACING,
@@ -53,12 +51,6 @@ const WATER_Y = WATER_MESH_Y;
 const MTN_SMOOTH_RADIUS = 12;
 const MTN_SMOOTH_PASSES = 0; // Real data doesn't need procedural smoothing
 
-// ── Flat-top hex neighbor direction offsets ────────────────────────────────────
-const FLAT_TOP_DQ = [1, 1, 0, -1, -1, 0];
-const FLAT_TOP_DR = [0, -1, -1, 0, 1, 1];
-
-const SQRT3 = Math.sqrt(3);
-const SQRT3_HALF = SQRT3 / 2;
 
 // ── Parse terrain color hex strings into [r,g,b] float arrays ─────────────────
 
@@ -350,44 +342,17 @@ export class TerrainMeshBuilder {
     for (const chunk of this.chunks) chunk.geometry.dispose();
     this.chunks = [];
 
-    const tiles = gameMap.getAllTiles();
-    const tileCount = tiles.length;
+    // ── Step 2-3: Skipped — no hex tile lookup or mountain depth BFS needed ──
+    // Terrain properties are now sampled directly at each vertex position.
 
-    // ── Step 2: Build tile coordinate lookup ──
-    const tileByCoord = new Map<string, number>();
-    for (let ti = 0; ti < tileCount; ti++) {
-      tileByCoord.set(`${tiles[ti].q},${tiles[ti].r}`, ti);
-    }
+    // ── Step 4: World bounding box from geographic bounds ──
+    const wb = computeWorldBounds(20);
+    let minX = wb.minX;
+    let maxX = wb.maxX;
+    let minZ = wb.minZ;
+    let maxZ = wb.maxZ;
 
-    // ── Step 3: Mountain depth BFS ──
-    const mtnDepthArr = this._computeMountainDepths(
-      tiles,
-      tileCount,
-      tileByCoord,
-      gameMap,
-    );
-
-    // ── Step 4: Find land bounding box ──
-    let minX = Infinity,
-      maxX = -Infinity,
-      minZ = Infinity,
-      maxZ = -Infinity;
-    const tileCX = new Float64Array(tileCount);
-    const tileCZ = new Float64Array(tileCount);
-    for (let ti = 0; ti < tileCount; ti++) {
-      const p = hexToPixel({ q: tiles[ti].q, r: tiles[ti].r }, HEX_SIZE);
-      tileCX[ti] = p.x;
-      tileCZ[ti] = -p.y;
-      if (!tiles[ti].isWater) {
-        const pad = HEX_SIZE * 1.2;
-        if (p.x - pad < minX) minX = p.x - pad;
-        if (p.x + pad > maxX) maxX = p.x + pad;
-        if (-p.y - pad < minZ) minZ = -p.y - pad;
-        if (-p.y + pad > maxZ) maxZ = -p.y + pad;
-      }
-    }
-
-    // ── Step 5: Generate vertex grid ──
+    // ── Step 5: Generate vertex grid with direct geo sampling ──
     const numCols = Math.ceil((maxX - minX) / GRID_SPACING) + 1;
     const numRows = Math.ceil((maxZ - minZ) / GRID_SPACING) + 1;
     const totalVerts = numCols * numRows;
@@ -398,14 +363,16 @@ export class TerrainMeshBuilder {
     const terrainTypes = new Float32Array(totalVerts);
     const terrainBlendArr = new Float32Array(totalVerts);
     const snowCoverArr = new Float32Array(totalVerts);
-    const coastDistArr = new Float32Array(totalVerts).fill(1.0); // 1.0 = far from water
-    const hexCoords = new Float32Array(totalVerts * 2);
+    const coastDistArr = new Float32Array(totalVerts).fill(1.0);
+    const geoCoords = new Float32Array(totalVerts * 2); // repurposed as geo UV coords
     const uvs = new Float32Array(totalVerts * 2);
-    const vertTile = new Int32Array(totalVerts).fill(-1);
+    const vertIsLand = new Uint8Array(totalVerts); // 1=land, 0=water
     const heightLookup = new Map<string, number>();
 
+    // Cache terrain samples per vertex for later use in boundary blending
+    const vertTerrain = new Array<TerrainProperties | null>(totalVerts).fill(null);
+
     for (let row = 0; row < numRows; row++) {
-      // Yield every 50 rows to prevent "page unresponsive"
       if (yieldFn && row > 0 && row % 50 === 0) await yieldFn();
 
       for (let col = 0; col < numCols; col++) {
@@ -413,32 +380,25 @@ export class TerrainMeshBuilder {
         const wx = minX + col * GRID_SPACING;
         const wz = minZ + row * GRID_SPACING;
 
-        const hex = pixelToHex(wx, -wz, HEX_SIZE);
-        const ti = tileByCoord.get(`${hex.q},${hex.r}`);
-        const tile = ti !== undefined ? tiles[ti] : undefined;
+        // Convert world position to geographic coordinates for terrain sampling
+        const geo = worldToGeo(wx, wz);
+        const props = sampleTerrainAt(geo.lon, geo.lat);
+        vertTerrain[vi] = props;
 
         positions[vi * 3] = wx;
         positions[vi * 3 + 2] = wz;
         uvs[vi * 2] = wx * 0.01;
         uvs[vi * 2 + 1] = wz * 0.01;
 
-        // Store hex coordinates for feature map lookup in shader
-        hexCoords[vi * 2] = hex.q;
-        hexCoords[vi * 2 + 1] = hex.r;
+        // Store geographic coordinates for shader lookups
+        geoCoords[vi * 2] = geo.lon;
+        geoCoords[vi * 2 + 1] = geo.lat;
 
-        // ── Water or missing tile ──
-        // Water terrain sits at water plane level (Y=0) — NOT sunken to -1.5.
-        // This prevents canyon-like cliffs at lake edges. The water plane renders
-        // on top with waves/color, hiding this flat terrain underneath.
-        if (!tile || tile.isWater || ti === undefined) {
-          // Use real heightmap if available, clamped to water plane level
-          let waterY = 0.0; // WATER_PLANE_Y level
-          if (tile && tile.isWater) {
-            // Sample real elevation to keep terrain continuous near shores
-            const realH = getHeight(wx, -wz, 2, 'desert');
-            // Clamp: never above water plane, never below -0.5
-            waterY = Math.min(0.0, Math.max(-0.5, realH * 0.02));
-          }
+        // ── Water ──
+        if (props.isWater) {
+          let waterY = 0.0;
+          const realH = getHeight(wx, -wz, 2, 'desert');
+          waterY = Math.min(0.0, Math.max(-0.5, realH * 0.02));
           positions[vi * 3 + 1] = waterY;
           terrainTypes[vi] = TERRAIN_INDEX['water'];
           const waterRGB: [number, number, number] = [0.05, 0.18, 0.28];
@@ -451,23 +411,20 @@ export class TerrainMeshBuilder {
           continue;
         }
 
-        vertTile[vi] = ti;
+        vertIsLand[vi] = 1;
 
-        const terrain = tile.terrain;
-        const elev = tile.elevation;
+        const terrain = props.terrain;
+        const elev = props.elevation;
         let wy: number;
 
-        // ── Primary height: real USGS heightmap ──
-        // All terrain types (mountain, desert, etc.) use the same real data.
-        // The heightmap already encodes correct elevations for mountains,
-        // canyons, valleys, mesas, salt flats, etc.
+        // Primary height: real USGS heightmap
         wy = getHeight(wx, -wz, elev, terrain);
 
         positions[vi * 3 + 1] = wy;
 
-        // ── Compute vertex color ──
-        const tint = REGION_TINT[tile.region] ?? TINT_NONE;
-        const color = computeVariedColor(wx, wz, terrain, elev, tint, tile.formation, wy);
+        // Vertex color
+        const tint = REGION_TINT[props.region] ?? TINT_NONE;
+        const color = computeVariedColor(wx, wz, terrain, elev, tint, props.formation, wy);
         colors[vi * 3] = color[0];
         colors[vi * 3 + 1] = color[1];
         colors[vi * 3 + 2] = color[2];
@@ -477,7 +434,7 @@ export class TerrainMeshBuilder {
 
         terrainTypes[vi] = TERRAIN_INDEX[terrain] ?? 0;
 
-        // Snow cover: elevation-based with noise for natural treeline
+        // Snow cover
         if (terrain === 'mountain' || terrain === 'alpine') {
           const snowThreshold = ELEVATION_SCALE * 6;
           if (wy > snowThreshold) {
@@ -487,20 +444,11 @@ export class TerrainMeshBuilder {
           }
         }
 
-        // Coast distance: how close vertex is to water (for canyon floor moisture)
+        // Coast distance: check neighboring grid vertices for water
         if (terrain === 'river_valley' || terrain === 'canyon_floor' || terrain === 'marsh') {
-          coastDistArr[vi] = 0.0; // near water
-        } else {
-          // Check if any neighbor is water
-          let nearWater = false;
-          for (let d = 0; d < 6; d++) {
-            const nb = hexNeighbor({ q: tile.q, r: tile.r }, d);
-            const nti = tileByCoord.get(`${nb.q},${nb.r}`);
-            const nt = nti !== undefined ? tiles[nti] : undefined;
-            if (nt && nt.isWater) { nearWater = true; break; }
-          }
-          coastDistArr[vi] = nearWater ? 10.0 : 100.0;
+          coastDistArr[vi] = 0.0;
         }
+        // Coast proximity will be refined in coastal smoothing pass below
 
         heightLookup.set(vertKey(wx, wz), wy);
       }
@@ -514,57 +462,10 @@ export class TerrainMeshBuilder {
     this.gridHeights = new Float32Array(totalVerts);
     for (let i = 0; i < totalVerts; i++) this.gridHeights[i] = positions[i * 3 + 1];
 
-    // ── Step 7a: Global terrain smoothing (anti-frill) ──
-    // Without this, hex boundaries create jagged height steps.
-    // Multi-pass Laplacian smoothing on ALL land vertices eliminates frills
-    // while preserving large-scale terrain features from the real heightmap.
-    {
-      // Real USGS heightmap is already smooth — global smoothing destroys real cliffs
-      const GLOBAL_SMOOTH_PASSES = 0;
-      const _smoothBuf = new Float32Array(totalVerts);
-
-      for (let pass = 0; pass < GLOBAL_SMOOTH_PASSES; pass++) {
-        // Copy current heights
-        for (let i = 0; i < totalVerts; i++) _smoothBuf[i] = positions[i * 3 + 1];
-
-        for (let row = 1; row < numRows - 1; row++) {
-          for (let col = 1; col < numCols - 1; col++) {
-            const vi = row * numCols + col;
-            if (vertTile[vi] < 0) continue; // skip water
-
-            // 8-neighbor average
-            const n = [
-              vi - 1, vi + 1, vi - numCols, vi + numCols,
-              vi - numCols - 1, vi - numCols + 1,
-              vi + numCols - 1, vi + numCols + 1,
-            ];
-            let sum = 0, cnt = 0;
-            for (const nvi of n) {
-              if (nvi >= 0 && nvi < totalVerts) { sum += _smoothBuf[nvi]; cnt++; }
-            }
-            if (cnt === 0) continue;
-            const avg = sum / cnt;
-
-            // Gentle blend toward average — preserves large features, removes hex noise
-            // Check if this vertex is near a hex boundary (different terrain neighbors)
-            const blend = 0.15; // subtle smoothing
-            positions[vi * 3 + 1] = _smoothBuf[vi] + (avg - _smoothBuf[vi]) * blend;
-          }
-        }
-      }
-
-      // Update height lookup after global smoothing
-      for (let row = 0; row < numRows; row++) {
-        for (let col = 0; col < numCols; col++) {
-          const vi = row * numCols + col;
-          if (vertTile[vi] >= 0) {
-            const wx = minX + col * GRID_SPACING;
-            const wz = minZ + row * GRID_SPACING;
-            heightLookup.set(vertKey(wx, wz), positions[vi * 3 + 1]);
-          }
-        }
-      }
-    }
+    // ── Step 7a: Global terrain smoothing — SKIPPED ──
+    // No hex boundaries exist in the new system — terrain types are sampled
+    // continuously from geographic polygons. No hex-boundary smoothing needed.
+    // Real USGS heightmap provides natural mountain/terrain profiles.
 
     // ── Step 7a2: Coastal smoothing (water↔land transitions) ──
     // Two phases: first flatten land near water, then smooth water side.
@@ -582,11 +483,11 @@ export class TerrainMeshBuilder {
       for (let row = 1; row < numRows - 1; row++) {
         for (let col = 1; col < numCols - 1; col++) {
           const vi = row * numCols + col;
-          const isWater = vertTile[vi] < 0;
+          const isWater = !vertIsLand[vi];
           const cardinals = [vi - 1, vi + 1, vi - numCols, vi + numCols];
           for (const nvi of cardinals) {
             if (nvi < 0 || nvi >= totalVerts) continue;
-            const nIsWater = vertTile[nvi] < 0;
+            const nIsWater = !vertIsLand[nvi];
             if (isWater !== nIsWater) {
               coastVertDist[vi] = 0;
               coastBfs.push(vi);
@@ -616,7 +517,7 @@ export class TerrainMeshBuilder {
       // Phase 1: Flatten LAND vertices near water — pull them down toward water level
       // This prevents the massive cliff between real-heightmap land and water at Y=-12
       for (let vi = 0; vi < totalVerts; vi++) {
-        if (vertTile[vi] < 0) continue; // skip water vertices
+        if (!vertIsLand[vi]) continue; // skip water vertices
         const cd = coastVertDist[vi];
         if (cd < 0 || cd >= COAST_LAND_FLAT_RADIUS) continue;
         // Flatten strength: strongest at boundary (cd=0), fading inland
@@ -635,7 +536,7 @@ export class TerrainMeshBuilder {
           for (let col = 1; col < numCols - 1; col++) {
             const vi = row * numCols + col;
             if (coastVertDist[vi] < 0) continue;
-            if (vertTile[vi] >= 0) continue; // only smooth water side
+            if (vertIsLand[vi]) continue; // only smooth water side
             const t = 1 - coastVertDist[vi] / COAST_SMOOTH_RADIUS;
             const blend = 0.5 * t * t * t;
             if (blend < 0.005) continue;
@@ -671,7 +572,7 @@ export class TerrainMeshBuilder {
       for (let row = 0; row < numRows; row++) {
         for (let col = 0; col < numCols; col++) {
           const vi = row * numCols + col;
-          if (vertTile[vi] >= 0) {
+          if (vertIsLand[vi]) {
             const wx = minX + col * GRID_SPACING;
             const wz = minZ + row * GRID_SPACING;
             positions[vi * 3 + 1] = this.gridHeights![vi];
@@ -686,76 +587,67 @@ export class TerrainMeshBuilder {
     if (yieldFn) await yieldFn();
 
     // ── Step 8: Terrain boundary color blending ──
-    // For each vertex near a hex boundary, check 6 neighbors. If different
-    // terrain type, blend vertex color proportionally toward neighbor's color.
+    // Check grid neighbors (not hex neighbors) for different terrain types.
+    // Blend vertex colors smoothly across terrain boundaries.
     {
       const BLEND_SCALE = 0.60;
 
-      for (let vi = 0; vi < totalVerts; vi++) {
-        const ti = vertTile[vi];
-        if (ti < 0) continue;
-        const tile = tiles[ti];
-        const wx = positions[vi * 3];
-        const wz = positions[vi * 3 + 2];
-        const ownDx = wx - tileCX[ti];
-        const ownDz = wz - tileCZ[ti];
-        const ownDist = Math.sqrt(ownDx * ownDx + ownDz * ownDz);
-        // Skip vertices deep inside hex center
-        if (ownDist < HEX_SIZE * 0.2) continue;
+      for (let row = 1; row < numRows - 1; row++) {
+        for (let col = 1; col < numCols - 1; col++) {
+          const vi = row * numCols + col;
+          if (!vertIsLand[vi]) continue;
+          const props = vertTerrain[vi]!;
+          const ownTerrain = props.terrain;
 
-        // Add noise to the vertex position for blend computation (breaks hex pattern)
-        const noiseX = valueNoise2D(wx * 0.03, wz * 0.03, SEED + 4000) * HEX_SIZE * 0.25;
-        const noiseZ = valueNoise2D(wx * 0.03, wz * 0.03, SEED + 4001) * HEX_SIZE * 0.25;
-        const perturbedX = wx + noiseX;
-        const perturbedZ = wz + noiseZ;
-        // Recompute own distance using perturbed position
-        const pOwnDx = perturbedX - tileCX[ti];
-        const pOwnDz = perturbedZ - tileCZ[ti];
-        const pOwnDist = Math.sqrt(pOwnDx * pOwnDx + pOwnDz * pOwnDz);
+          // Check 8 grid neighbors for different terrain
+          const neighbors = [
+            vi - 1, vi + 1, vi - numCols, vi + numCols,
+            vi - numCols - 1, vi - numCols + 1,
+            vi + numCols - 1, vi + numCols + 1,
+          ];
 
-        let totalWeight = 0;
-        let blendR = 0, blendG = 0, blendB = 0;
-        let bestWeight = 0;
+          let totalWeight = 0;
+          let blendR = 0, blendG = 0, blendB = 0;
 
-        for (let d = 0; d < 6; d++) {
-          const nq = tile.q + FLAT_TOP_DQ[d],
-            nr = tile.r + FLAT_TOP_DR[d];
-          const nt = gameMap.getTile(nq, nr);
-          if (!nt || nt.terrain === tile.terrain) continue;
-          if (nt.terrain === 'water') continue;
-          const nIdx = TERRAIN_INDEX[nt.terrain] ?? -1;
-          const nRGB = nIdx >= 0 ? TERRAIN_RGB_BY_IDX[nIdx] : null;
-          if (!nRGB) continue;
-          // Neighbor hex center in world coords
-          const ncx = HEX_SIZE * 1.5 * nq;
-          const ncz = -(HEX_SIZE * (SQRT3_HALF * nq + SQRT3 * nr));
-          const ndx = perturbedX - ncx, ndz = perturbedZ - ncz;
-          const nDist = Math.sqrt(ndx * ndx + ndz * ndz);
-          const ratio = nDist / (pOwnDist + 0.01);
-          if (ratio > 1.6) continue;
-          const t = Math.max(0, Math.min(1, 1.0 - (ratio - 0.8) / 0.8));
-          if (t <= 0) continue;
-          blendR += nRGB[0] * t;
-          blendG += nRGB[1] * t;
-          blendB += nRGB[2] * t;
-          totalWeight += t;
-          if (t > bestWeight) bestWeight = t;
+          for (const nvi of neighbors) {
+            if (nvi < 0 || nvi >= totalVerts) continue;
+            if (!vertIsLand[nvi]) continue;
+            const nProps = vertTerrain[nvi];
+            if (!nProps || nProps.terrain === ownTerrain) continue;
+            if (nProps.terrain === 'water') continue;
+
+            const nIdx = TERRAIN_INDEX[nProps.terrain] ?? -1;
+            const nRGB = nIdx >= 0 ? TERRAIN_RGB_BY_IDX[nIdx] : null;
+            if (!nRGB) continue;
+
+            // Weight by noise for organic transition
+            const wx = positions[vi * 3];
+            const wz = positions[vi * 3 + 2];
+            const noise = valueNoise2D(wx * 0.03, wz * 0.03, SEED + 4000);
+            const w = 0.3 + noise * 0.7;
+
+            blendR += nRGB[0] * w;
+            blendG += nRGB[1] * w;
+            blendB += nRGB[2] * w;
+            totalWeight += w;
+          }
+
+          if (totalWeight <= 0) continue;
+
+          const avgR = blendR / totalWeight;
+          const avgG = blendG / totalWeight;
+          const avgB = blendB / totalWeight;
+
+          const blendAmt = Math.min(1, totalWeight / 4) * BLEND_SCALE;
+          terrainBlendArr[vi] = blendAmt;
+
+          colors[vi * 3] = colors[vi * 3] * (1 - blendAmt) + avgR * blendAmt;
+          colors[vi * 3 + 1] = colors[vi * 3 + 1] * (1 - blendAmt) + avgG * blendAmt;
+          colors[vi * 3 + 2] = colors[vi * 3 + 2] * (1 - blendAmt) + avgB * blendAmt;
+          baseColorsArr[vi * 3] = colors[vi * 3];
+          baseColorsArr[vi * 3 + 1] = colors[vi * 3 + 1];
+          baseColorsArr[vi * 3 + 2] = colors[vi * 3 + 2];
         }
-        if (totalWeight <= 0) continue;
-
-        const avgR = blendR / totalWeight;
-        const avgG = blendG / totalWeight;
-        const avgB = blendB / totalWeight;
-
-        const blendAmt = Math.min(bestWeight, 1) * BLEND_SCALE;
-        terrainBlendArr[vi] = blendAmt;
-
-        colors[vi * 3] = colors[vi * 3] * (1 - blendAmt) + avgR * blendAmt;
-        colors[vi * 3 + 1] = colors[vi * 3 + 1] * (1 - blendAmt) + avgG * blendAmt;
-        colors[vi * 3 + 2] = colors[vi * 3 + 2] * (1 - blendAmt) + avgB * blendAmt;
-        baseColorsArr[vi * 3] = colors[vi * 3];
-        baseColorsArr[vi * 3 + 1] = colors[vi * 3 + 1];
-        baseColorsArr[vi * 3 + 2] = colors[vi * 3 + 2];
       }
     }
 
@@ -765,9 +657,9 @@ export class TerrainMeshBuilder {
     // Seed: mountain tile vertices (dist=0) and foothill-blended vertices (dist=1)
     const mtnBfsQueue: number[] = [];
     for (let vi = 0; vi < totalVerts; vi++) {
-      const ti = vertTile[vi];
-      if (ti < 0) continue;
-      if (tiles[ti].terrain === 'mountain') {
+      if (!vertIsLand[vi]) continue;
+      const props = vertTerrain[vi];
+      if (props && props.terrain === 'mountain') {
         mtnVertDist[vi] = 0;
         mtnBfsQueue.push(vi);
       } else if (positions[vi * 3 + 1] > 3.0) {
@@ -810,8 +702,8 @@ export class TerrainMeshBuilder {
           if (isMtn) {
             // Mountain interior: height-dependent smoothing
             const heightFade = Math.max(0.5, 1.0 - vertY * 0.004);
-            const ti2 = vertTile[vi];
-            const tileElev = ti2 >= 0 ? tiles[ti2].elevation : 7;
+            const vProps = vertTerrain[vi];
+            const tileElev = vProps ? vProps.elevation : 7;
             const elevSmooth = tileElev <= 5 ? 0.15 : 0.28;
             blend = elevSmooth * borderT * heightFade;
           } else {
@@ -836,7 +728,7 @@ export class TerrainMeshBuilder {
           avgH /= count;
 
           positions[vi * 3 + 1] = _smoothBuf[vi] + (avgH - _smoothBuf[vi]) * blend;
-          if (vertTile[vi] >= 0) {
+          if (vertIsLand[vi]) {
             heightLookup.set(
               vertKey(positions[vi * 3], positions[vi * 3 + 2]),
               positions[vi * 3 + 1],
@@ -861,7 +753,7 @@ export class TerrainMeshBuilder {
       const riverQueue: number[] = [];
 
       for (let vi = 0; vi < totalVerts; vi++) {
-        if (vertTile[vi] < 0) continue;
+        if (!vertIsLand[vi]) continue;
         const rwx = positions[vi * 3];
         const rwz = positions[vi * 3 + 2];
         const [mask, vd] = this.sampleRiver(rwx, rwz);
@@ -891,7 +783,7 @@ export class TerrainMeshBuilder {
         ];
         for (const ni of neighbors) {
           if (ni < 0 || visited[ni]) continue;
-          if (vertTile[ni] < 0) continue;
+          if (!vertIsLand[ni]) continue;
           const ddx = positions[ni * 3] - positions[vi * 3];
           const ddz = positions[ni * 3 + 2] - positions[vi * 3 + 2];
           const dd = curDist + Math.sqrt(ddx * ddx + ddz * ddz);
@@ -940,13 +832,12 @@ export class TerrainMeshBuilder {
         const mask = riverMask[vi];
         if (dist === Infinity && mask < 0.01) continue;
 
-        const tileIdx = vertTile[vi];
+        const vp = vertTerrain[vi];
         let coastFade = 1.0;
-        if (tileIdx >= 0 && tileIdx < tileCount) {
-          const tt = tiles[tileIdx];
-          if (tt.isWater) coastFade = 0.0;
-          else if (tt.elevation <= 1) coastFade = 0.5;
-          else if (tt.elevation <= 2) coastFade = 0.8;
+        if (vp) {
+          if (vp.isWater) coastFade = 0.0;
+          else if (vp.elevation <= 1) coastFade = 0.5;
+          else if (vp.elevation <= 2) coastFade = 0.8;
         }
 
         const currentY = positions[vi * 3 + 1];
@@ -1029,8 +920,8 @@ export class TerrainMeshBuilder {
         const v01 = v00 + numCols;
         const v11 = v01 + 1;
         const anyLand =
-          vertTile[v00] >= 0 || vertTile[v10] >= 0 ||
-          vertTile[v01] >= 0 || vertTile[v11] >= 0;
+          vertIsLand[v00] || vertIsLand[v10] ||
+          vertIsLand[v01] || vertIsLand[v11];
         if (!anyLand) continue;
         // Alternate diagonal split direction per quad to hide grid pattern
         if ((row + col) % 2 === 0) {
@@ -1043,34 +934,35 @@ export class TerrainMeshBuilder {
       }
     }
 
-    // ── Step 12: Split into chunks ──
-    const tileToChunk = new Uint16Array(tileCount);
+    // ── Step 12: Split into chunks by world position ──
     const chunkW = (maxX - minX + 1) / CHUNK_COLS;
     const chunkH = (maxZ - minZ + 1) / CHUNK_ROWS;
-    for (let ti = 0; ti < tileCount; ti++) {
-      const cc = Math.min(CHUNK_COLS - 1, Math.max(0, Math.floor((tileCX[ti] - minX) / chunkW)));
-      const cr = Math.min(CHUNK_ROWS - 1, Math.max(0, Math.floor((tileCZ[ti] - minZ) / chunkH)));
-      tileToChunk[ti] = cr * CHUNK_COLS + cc;
+
+    // Map each vertex to a chunk by its world position
+    const vertChunk = new Uint16Array(totalVerts);
+    for (let vi = 0; vi < totalVerts; vi++) {
+      const wx = positions[vi * 3];
+      const wz = positions[vi * 3 + 2];
+      const cc = Math.min(CHUNK_COLS - 1, Math.max(0, Math.floor((wx - minX) / chunkW)));
+      const cr = Math.min(CHUNK_ROWS - 1, Math.max(0, Math.floor((wz - minZ) / chunkH)));
+      vertChunk[vi] = cr * CHUNK_COLS + cc;
     }
 
     const totalChunks = CHUNK_COLS * CHUNK_ROWS;
     const chunkTriIndices: number[][] = Array.from({ length: totalChunks }, () => []);
     const chunkVertSets: Set<number>[] = Array.from({ length: totalChunks }, () => new Set());
-    const chunkTilesets: Set<number>[] = Array.from({ length: totalChunks }, () => new Set());
 
     for (let i = 0; i < allIndices.length; i += 3) {
       const a = allIndices[i], b = allIndices[i + 1], c = allIndices[i + 2];
-      let chunkIdx = 0;
+      // Use the first land vertex's chunk, or first vertex's chunk
+      let chunkIdx = vertChunk[a];
       for (const v of [a, b, c]) {
-        if (vertTile[v] >= 0) { chunkIdx = tileToChunk[vertTile[v]]; break; }
+        if (vertIsLand[v]) { chunkIdx = vertChunk[v]; break; }
       }
       chunkTriIndices[chunkIdx].push(a, b, c);
       chunkVertSets[chunkIdx].add(a);
       chunkVertSets[chunkIdx].add(b);
       chunkVertSets[chunkIdx].add(c);
-      for (const v of [a, b, c]) {
-        if (vertTile[v] >= 0) chunkTilesets[chunkIdx].add(vertTile[v]);
-      }
     }
 
     // ── Build chunk geometries ──
@@ -1079,14 +971,13 @@ export class TerrainMeshBuilder {
     for (let ci = 0; ci < totalChunks; ci++) {
       const chunkVerts = chunkVertSets[ci];
       const chunkTris = chunkTriIndices[ci];
-      const chunkTiles = [...chunkTilesets[ci]];
 
       if (chunkVerts.size === 0) {
         const geom = new THREE.BufferGeometry();
         this.chunks.push({
           geometry: geom,
           baseColors: new Float32Array(0),
-          tileIndices: chunkTiles,
+          tileIndices: [],
           tileLocalVerts: new Map(),
         });
         geometries.push(geom);
@@ -1107,7 +998,7 @@ export class TerrainMeshBuilder {
       const lBlend = new Float32Array(localCount);
       const lSnow = new Float32Array(localCount);
       const lCoast = new Float32Array(localCount);
-      const lHex = new Float32Array(localCount * 2);
+      const lGeo = new Float32Array(localCount * 2);
       const lUv = new Float32Array(localCount * 2);
 
       for (let li = 0; li < localCount; li++) {
@@ -1126,8 +1017,8 @@ export class TerrainMeshBuilder {
         lBlend[li] = terrainBlendArr[gi];
         lSnow[li] = snowCoverArr[gi];
         lCoast[li] = coastDistArr[gi];
-        lHex[li * 2] = hexCoords[gi * 2];
-        lHex[li * 2 + 1] = hexCoords[gi * 2 + 1];
+        lGeo[li * 2] = geoCoords[gi * 2];
+        lGeo[li * 2 + 1] = geoCoords[gi * 2 + 1];
         lUv[li * 2] = uvs[gi * 2];
         lUv[li * 2 + 1] = uvs[gi * 2 + 1];
       }
@@ -1138,15 +1029,8 @@ export class TerrainMeshBuilder {
         lIndices[j] = g2l.get(chunkTris[j])!;
       }
 
-      // Build tile->localVerts mapping
+      // Build chunk->localVerts mapping (by chunk index)
       const tileLocalVerts = new Map<number, number[]>();
-      for (let li = 0; li < localCount; li++) {
-        const ti = vertTile[localVerts[li]];
-        if (ti < 0) continue;
-        let arr = tileLocalVerts.get(ti);
-        if (!arr) { arr = []; tileLocalVerts.set(ti, arr); }
-        arr.push(li);
-      }
 
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
@@ -1155,7 +1039,7 @@ export class TerrainMeshBuilder {
       geom.setAttribute('terrainBlend', new THREE.BufferAttribute(lBlend, 1));
       geom.setAttribute('snowCover', new THREE.BufferAttribute(lSnow, 1));
       geom.setAttribute('coastDist', new THREE.BufferAttribute(lCoast, 1));
-      geom.setAttribute('hexCoord', new THREE.BufferAttribute(lHex, 2));
+      geom.setAttribute('geoCoord', new THREE.BufferAttribute(lGeo, 2));
       geom.setAttribute('uv', new THREE.BufferAttribute(lUv, 2));
       geom.setIndex(new THREE.BufferAttribute(lIndices, 1));
       geom.computeVertexNormals();
@@ -1178,25 +1062,28 @@ export class TerrainMeshBuilder {
       this.chunks.push({
         geometry: geom,
         baseColors: lBase,
-        tileIndices: chunkTiles,
+        tileIndices: [],
         tileLocalVerts,
       });
       geometries.push(geom);
     }
 
     // ── Step 13: Finalize height grid for bilinear interpolation ──
-    // Copy final heights (after all smoothing/sculpting passes)
     for (let i = 0; i < totalVerts; i++) this.gridHeights![i] = positions[i * 3 + 1];
 
-    // ── Step 14: Publish terrain heights and mountain depths to GameMap ──
+    // ── Step 14: Publish terrain heights to GameMap ──
+    // Sample grid cell centers and store by grid coord key
+    const tiles = gameMap.getAllTiles();
     const terrainHeights = new Map<string, number>();
     const mountainDepths = new Map<string, number>();
-    for (let ti = 0; ti < tileCount; ti++) {
-      const t = tiles[ti];
+    for (const t of tiles) {
       const key = `${t.q},${t.r}`;
-      // Sample height at tile center from the grid
-      const gx = (tileCX[ti] - minX) / GRID_SPACING;
-      const gz = (tileCZ[ti] - minZ) / GRID_SPACING;
+      const w = geoToWorld(
+        -114.05 + t.q * (5.0 / 160),
+        42.0 - t.r * (5.0 / 140),
+      );
+      const gx = (w.x - minX) / GRID_SPACING;
+      const gz = (w.z - minZ) / GRID_SPACING;
       const col0 = Math.max(0, Math.min(numCols - 1, Math.round(gx)));
       const row0 = Math.max(0, Math.min(numRows - 1, Math.round(gz)));
       const centerVi = row0 * numCols + col0;
@@ -1204,7 +1091,7 @@ export class TerrainMeshBuilder {
         terrainHeights.set(key, this.gridHeights![centerVi]);
       }
       if (t.terrain === 'mountain') {
-        mountainDepths.set(key, mtnDepthArr[ti]);
+        mountainDepths.set(key, 0.5); // Default depth — no hex BFS needed
       }
     }
     gameMap.setTerrainHeights(terrainHeights);
@@ -1214,74 +1101,6 @@ export class TerrainMeshBuilder {
     this.riverData = null;
 
     return geometries;
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Mountain depth BFS — computes normalized 0-1 depth for each mountain tile
-  // ─────────────────────────────────────────────────────────────────────────
-
-  private _computeMountainDepths(
-    tiles: Tile[],
-    tileCount: number,
-    tileByCoord: Map<string, number>,
-    gameMap: GameMap,
-  ): Float32Array {
-    const MTN_MAX_DEPTH = 4;
-    const mtnDepthRaw = new Int8Array(tileCount).fill(-1);
-    const edgeQueue: number[] = [];
-
-    // Find mountain edge tiles (adjacent to at least one non-mountain)
-    for (let ti = 0; ti < tileCount; ti++) {
-      if (tiles[ti].terrain !== 'mountain') continue;
-      let isEdge = false;
-      for (let d = 0; d < 6; d++) {
-        const nb = hexNeighbor({ q: tiles[ti].q, r: tiles[ti].r }, d);
-        const nt = gameMap.getTile(nb.q, nb.r);
-        if (!nt || nt.terrain !== 'mountain') {
-          isEdge = true;
-          break;
-        }
-      }
-      if (isEdge) {
-        mtnDepthRaw[ti] = 0;
-        edgeQueue.push(ti);
-      }
-    }
-
-    // BFS inward from edges
-    let bfsQueue = edgeQueue;
-    while (bfsQueue.length > 0) {
-      const nextBfs: number[] = [];
-      for (const ti of bfsQueue) {
-        const depth = mtnDepthRaw[ti];
-        if (depth >= MTN_MAX_DEPTH) continue;
-        for (let d = 0; d < 6; d++) {
-          const nb = hexNeighbor({ q: tiles[ti].q, r: tiles[ti].r }, d);
-          const nti = tileByCoord.get(`${nb.q},${nb.r}`);
-          if (nti === undefined || mtnDepthRaw[nti] >= 0) continue;
-          if (tiles[nti].terrain !== 'mountain') continue;
-          mtnDepthRaw[nti] = depth + 1;
-          nextBfs.push(nti);
-        }
-      }
-      bfsQueue = nextBfs;
-    }
-
-    // Cap any unreached mountain tiles
-    for (let ti = 0; ti < tileCount; ti++) {
-      if (tiles[ti].terrain === 'mountain' && mtnDepthRaw[ti] < 0) {
-        mtnDepthRaw[ti] = MTN_MAX_DEPTH;
-      }
-    }
-
-    // Normalize to 0-1 range
-    const mtnDepthArr = new Float32Array(tileCount);
-    for (let ti = 0; ti < tileCount; ti++) {
-      if (tiles[ti].terrain === 'mountain') {
-        mtnDepthArr[ti] = Math.min(1, mtnDepthRaw[ti] / MTN_MAX_DEPTH);
-      }
-    }
-    return mtnDepthArr;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

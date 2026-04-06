@@ -1,5 +1,4 @@
 import './style.css';
-import { MAP_WIDTH, MAP_HEIGHT } from '@/constants';
 import { ThreeRenderer } from '@/rendering/three/ThreeRenderer';
 import { PickingSystem } from '@/rendering/three/PickingSystem';
 import { CameraControls } from '@/input/CameraControls';
@@ -42,7 +41,8 @@ async function init(): Promise<void> {
 
   // Phase 2: Create GameMap
   const { GameMap } = await import('@/core/map/GameMap');
-  const gameMap = new GameMap(MAP_WIDTH, MAP_HEIGHT);
+  const { GRID_COLS, GRID_ROWS } = await import('@/core/map/UtahMapData');
+  const gameMap = new GameMap(GRID_COLS, GRID_ROWS);
   gameMap.loadTiles(tileData);
   setLoadingProgress(20, 'Map loaded');
 

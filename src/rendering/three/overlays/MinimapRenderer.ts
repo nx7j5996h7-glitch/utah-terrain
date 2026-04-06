@@ -5,18 +5,14 @@
  * - Click the minimap to fly the camera to that world position.
  */
 
-import { MAP_WIDTH, MAP_HEIGHT, TERRAIN_COLORS, HEX_SIZE, SQRT3 } from '@/constants';
+import { TERRAIN_COLORS } from '@/constants';
 import type { TerrainType } from '@/constants';
 import type { GameMap } from '@/core/map/GameMap';
-import { hexToPixel } from '@/core/hex/HexUtils';
+import { geoToWorld, WORLD_WIDTH, WORLD_DEPTH } from '@/core/geo/GeoCoord';
+import { gridToGeo } from '@/core/map/UtahMapData';
 
 const MINIMAP_W = 200;
 const MINIMAP_H = 160;
-
-// Compute world bounds from hex grid dimensions
-// Flat-top hex: x = HEX_SIZE * 1.5 * q, y = HEX_SIZE * (sqrt3/2 * q + sqrt3 * r)
-const WORLD_WIDTH_APPROX = HEX_SIZE * 1.5 * MAP_WIDTH;
-const WORLD_DEPTH_APPROX = HEX_SIZE * SQRT3 * MAP_HEIGHT;
 
 export class MinimapRenderer {
   private readonly root: HTMLDivElement;
@@ -27,8 +23,8 @@ export class MinimapRenderer {
   private readonly styleEl: HTMLStyleElement;
 
   private onJump: ((worldX: number, worldZ: number) => void) | null = null;
-  private worldWidth = WORLD_WIDTH_APPROX;
-  private worldDepth = WORLD_DEPTH_APPROX;
+  private worldWidth = WORLD_WIDTH;
+  private worldDepth = WORLD_DEPTH;
 
   constructor() {
     this.styleEl = document.createElement('style');
@@ -79,44 +75,40 @@ export class MinimapRenderer {
     ctx.fillStyle = TERRAIN_COLORS.water;
     ctx.fillRect(0, 0, MINIMAP_W, MINIMAP_H);
 
-    // Compute actual world bounds from all tiles
+    // Compute world bounds from tiles
     let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
 
     const allTiles = gameMap.getAllTiles();
-    const tilePixels: { px: number; py: number; terrain: TerrainType }[] = [];
+    const tileWorld: { wx: number; wz: number; terrain: TerrainType }[] = [];
 
     for (const tile of allTiles) {
-      const pixel = hexToPixel({ q: tile.q, r: tile.r }, HEX_SIZE);
-      const px = pixel.x;
-      const py = pixel.y;
-      if (px < minX) minX = px;
-      if (px > maxX) maxX = px;
-      if (py < minY) minY = py;
-      if (py > maxY) maxY = py;
-      tilePixels.push({ px, py, terrain: tile.terrain });
+      const geo = gridToGeo(tile.q, tile.r);
+      const w = geoToWorld(geo.lon, geo.lat);
+      if (w.x < minX) minX = w.x;
+      if (w.x > maxX) maxX = w.x;
+      if (w.z < minZ) minZ = w.z;
+      if (w.z > maxZ) maxZ = w.z;
+      tileWorld.push({ wx: w.x, wz: w.z, terrain: tile.terrain });
     }
 
-    // Add padding for hex radius
-    minX -= HEX_SIZE;
-    maxX += HEX_SIZE;
-    minY -= HEX_SIZE;
-    maxY += HEX_SIZE;
+    minX -= 20; maxX += 20;
+    minZ -= 20; maxZ += 20;
 
     const rangeX = maxX - minX;
-    const rangeY = maxY - minY;
+    const rangeZ = maxZ - minZ;
 
-    // Store actual world bounds for viewport/click mapping
     this.worldWidth = rangeX;
-    this.worldDepth = rangeY;
+    this.worldDepth = rangeZ;
 
-    // Draw each tile as a small colored dot/rect
-    const dotW = Math.max(2, MINIMAP_W / MAP_WIDTH);
-    const dotH = Math.max(2, MINIMAP_H / MAP_HEIGHT);
+    const GRID_COLS = 160;
+    const GRID_ROWS = 140;
+    const dotW = Math.max(2, MINIMAP_W / GRID_COLS);
+    const dotH = Math.max(2, MINIMAP_H / GRID_ROWS);
 
-    for (const { px, py, terrain } of tilePixels) {
-      const mx = ((px - minX) / rangeX) * MINIMAP_W;
-      const my = ((py - minY) / rangeY) * MINIMAP_H;
+    for (const { wx, wz, terrain } of tileWorld) {
+      const mx = ((wx - minX) / rangeX) * MINIMAP_W;
+      const my = ((wz - minZ) / rangeZ) * MINIMAP_H;
 
       ctx.fillStyle = TERRAIN_COLORS[terrain] ?? '#000000';
       ctx.fillRect(mx - dotW / 2, my - dotH / 2, dotW, dotH);

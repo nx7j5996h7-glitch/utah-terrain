@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { CITIES, type CityDef } from '@/data/cities';
-import { hexToPixel } from '@/core/hex/HexUtils';
-import { HEX_SIZE, UTAH_WEST, UTAH_NORTH, DEG_PER_HEX_LON, DEG_PER_HEX_LAT, SQRT3 } from '@/constants';
+import { geoToWorld } from '@/core/geo/GeoCoord';
 import type { GameMap } from '@/core/map/GameMap';
 
 // ── Population tier thresholds ─────────────────────────────────────────────
@@ -21,16 +20,6 @@ interface CityEntry {
   worldY: number;
   worldZ: number;
   population: number;
-}
-
-// ── Geo → world conversion (continuous hex math) ──────────────────────────
-
-function geoToWorld(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  const px = -HEX_SIZE * 1.5 * q;
-  const py = HEX_SIZE * (SQRT3 / 2 * q + SQRT3 * r);
-  return { x: px, z: -py };
 }
 
 // ── Text sprite helper ─────────────────────────────────────────────────────
@@ -108,17 +97,13 @@ export class CityMarkers {
 
       let x: number, z: number, y: number;
 
+      const world = geoToWorld(city.lon, city.lat);
+      x = world.x;
+      z = world.z;
       if (tile) {
-        const pixel = hexToPixel({ q: tile.q, r: tile.r }, HEX_SIZE);
-        x = pixel.x;
-        z = -pixel.y;
         const th = gameMap.getTerrainHeight(tile.q, tile.r);
         y = th !== undefined ? th : 0;
       } else {
-        // Fallback: use geo coordinates directly
-        const world = geoToWorld(city.lon, city.lat);
-        x = world.x;
-        z = world.z;
         y = 0;
       }
 

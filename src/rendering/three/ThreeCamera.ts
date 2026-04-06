@@ -8,15 +8,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import gsap from 'gsap';
 import {
-  HEX_SIZE,
-  MAP_WIDTH,
-  MAP_HEIGHT,
   CAMERA_MIN_DISTANCE,
   CAMERA_MAX_DISTANCE,
   CAMERA_MIN_POLAR,
   CAMERA_MAX_POLAR,
 } from '@/constants';
-import { hexToPixel } from '@/core/hex/HexUtils';
+import { WORLD_CENTER } from '@/core/geo/GeoCoord';
 
 export class ThreeCamera {
   readonly camera: THREE.PerspectiveCamera;
@@ -34,11 +31,9 @@ export class ThreeCamera {
     const aspect = canvas.clientWidth / canvas.clientHeight;
     this.camera = new THREE.PerspectiveCamera(50, aspect, 1, 5000);
 
-    // Map center: hex (MAP_WIDTH/2, MAP_HEIGHT/2) → world coords
-    const centerHex = { q: Math.floor(MAP_WIDTH / 2), r: Math.floor(MAP_HEIGHT / 2) };
-    const centerPixel = hexToPixel(centerHex, HEX_SIZE);
-    const cx = centerPixel.x;
-    const cz = -centerPixel.y;
+    // Map center from geographic bounds
+    const cx = WORLD_CENTER.x;
+    const cz = WORLD_CENTER.z;
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(cx, 0, cz);

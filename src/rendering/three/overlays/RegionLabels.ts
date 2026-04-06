@@ -1,17 +1,7 @@
 import * as THREE from 'three';
 import type { GameMap } from '@/core/map/GameMap';
 import { REGIONS } from '@/data/regions';
-import { HEX_SIZE, UTAH_WEST, UTAH_NORTH, DEG_PER_HEX_LON, DEG_PER_HEX_LAT, SQRT3 } from '@/constants';
-
-// ── Geo → world conversion (continuous hex math) ──────────────────────────
-
-function geoToWorld(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  const px = -HEX_SIZE * 1.5 * q;
-  const py = HEX_SIZE * (SQRT3 / 2 * q + SQRT3 * r);
-  return { x: px, z: -py };
-}
+import { geoToWorld } from '@/core/geo/GeoCoord';
 
 // ── Region display config ──────────────────────────────────────────────────
 

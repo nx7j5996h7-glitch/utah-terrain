@@ -1,42 +1,9 @@
 import * as THREE from 'three';
 import type { WaterwayDef } from '@/data/rivers';
 import type { GameMap } from '@/core/map/GameMap';
-import {
-  HEX_SIZE,
-  MAP_WIDTH,
-  MAP_HEIGHT,
-  UTAH_WEST,
-  UTAH_NORTH,
-  DEG_PER_HEX_LON,
-  DEG_PER_HEX_LAT,
-} from '@/constants';
-import { hexToPixel } from '@/core/hex/HexUtils';
+import { geoToWorld, computeWorldBounds } from '@/core/geo/GeoCoord';
 
 const TEX_SIZE = 2048;
-const SQRT3 = Math.sqrt(3);
-
-/**
- * Convert geographic (lon, lat) to world pixel coordinates using continuous hex math.
- * x and z match the flat-top hex coordinate system used by hexToPixel.
- */
-function geoToWorldPixel(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  const x = -HEX_SIZE * 1.5 * q;
-  const y = HEX_SIZE * (SQRT3 / 2 * q + SQRT3 * r);
-  return { x, z: -y }; // world Z is negated pixel Y
-}
-
-/** Compute the world-space bounding box of the hex map. */
-function computeWorldBounds(): { minX: number; minZ: number; maxX: number; maxZ: number } {
-  const origin = hexToPixel({ q: 0, r: 0 }, HEX_SIZE);
-  const corner = hexToPixel({ q: MAP_WIDTH - 1, r: MAP_HEIGHT - 1 }, HEX_SIZE);
-  const minX = Math.min(origin.x, corner.x) - HEX_SIZE;
-  const maxX = Math.max(origin.x, corner.x) + HEX_SIZE;
-  const minY = Math.min(origin.y, corner.y) - HEX_SIZE;
-  const maxY = Math.max(origin.y, corner.y) + HEX_SIZE;
-  return { minX, minZ: -maxY, maxX, maxZ: -minY };
-}
 
 /** Rasterizes river paths into a 2048x2048 RGBA DataTexture for the terrain shader. */
 export class RiverMap {
@@ -45,7 +12,7 @@ export class RiverMap {
   private bounds = new THREE.Vector4(0, 0, 1, 1);
 
   build(rivers: WaterwayDef[], _gameMap: GameMap): void {
-    const wb = computeWorldBounds();
+    const wb = computeWorldBounds(20);
     const rangeX = wb.maxX - wb.minX;
     const rangeZ = wb.maxZ - wb.minZ;
     // Bounds: (minX, minZ, 1/rangeX, 1/rangeZ) — shader does UV = (pos - min) * invRange
@@ -59,7 +26,7 @@ export class RiverMap {
     for (const river of rivers) {
       // Convert waypoints to world coords via continuous hex math
       const worldPts = river.points.map(([lon, lat]) => {
-        const w = geoToWorldPixel(lon, lat);
+        const w = geoToWorld(lon, lat);
         return { x: w.x, z: w.z };
       });
 

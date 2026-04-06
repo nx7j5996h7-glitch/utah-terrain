@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { GameMap } from '@/core/map/GameMap';
 import type { Tile } from '@/core/map/Tile';
-import { pixelToHex } from '@/core/hex/HexUtils';
-import { HEX_SIZE } from '@/constants';
+import { worldToGeo } from '@/core/geo/GeoCoord';
+import { geoToGrid } from '@/core/map/UtahMapData';
 
 export class PickingSystem {
   private raycaster = new THREE.Raycaster();
@@ -21,9 +21,10 @@ export class PickingSystem {
     const point = this.pickWorldPoint(ndcX, ndcY);
     if (!point) return null;
 
-    // Convert world hit point to hex: world X = pixel X, world Z = -pixel Y
-    const hex = pixelToHex(point.x, -point.z, HEX_SIZE);
-    const tile = this.gameMap.getTile(hex.q, hex.r);
+    // Convert world hit point to geographic, then to grid cell
+    const geo = worldToGeo(point.x, point.z);
+    const grid = geoToGrid(geo.lon, geo.lat);
+    const tile = this.gameMap.getTile(grid.col, grid.row);
     return tile ?? null;
   }
 

@@ -1,16 +1,11 @@
-// === Grid Dimensions ===
+// === Math Constants ===
 export const SQRT3 = Math.sqrt(3);
-export const HEX_SIZE = 20;
-export const MAP_WIDTH = 160;  // hex columns (q: 0-159) — ~3.5 km/hex
-export const MAP_HEIGHT = 140; // hex rows (r: 0-139) — ~4 km/hex
 
 // === Geographic Bounds (WGS84) ===
 export const UTAH_WEST = -114.05;
 export const UTAH_EAST = -109.05;
 export const UTAH_NORTH = 42.0;
 export const UTAH_SOUTH = 37.0;
-export const DEG_PER_HEX_LON = (UTAH_EAST - UTAH_WEST) / MAP_WIDTH;   // ~0.0556 deg/hex
-export const DEG_PER_HEX_LAT = (UTAH_NORTH - UTAH_SOUTH) / MAP_HEIGHT; // ~0.0714 deg/hex
 
 // === Terrain Mesh ===
 export const GRID_SPACING = 2.0;       // vertex spacing in world units

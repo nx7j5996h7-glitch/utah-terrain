@@ -8,13 +8,13 @@
 
 import * as THREE from 'three';
 import {
-  HEX_SIZE,
   SCATTER_LOD_NEAR, SCATTER_LOD_FAR, SCATTER_LOD_UPDATE_THRESHOLD,
   GLOBAL_TERRAIN_SEED,
 } from '@/constants';
 import type { TerrainType, TerrainFeature } from '@/constants';
 import type { GameMap } from '@/core/map/GameMap';
-import { hexToPixel } from '@/core/hex/HexUtils';
+import { geoToWorld } from '@/core/geo/GeoCoord';
+import { gridToGeo } from '@/core/map/UtahMapData';
 
 // ── Vegetation Types ───────────────────────────────────────────────────────
 
@@ -728,11 +728,12 @@ export class VegetationScatter {
 
       if (entries.length === 0) continue;
 
-      // Hex center in world coordinates
-      const pixel = hexToPixel({ q: tile.q, r: tile.r }, HEX_SIZE);
-      const hexCenterX = pixel.x;
-      const hexCenterZ = -pixel.y;
-      const hexInnerR = HEX_SIZE * 0.866; // sqrt(3)/2
+      // Cell center in world coordinates
+      const geo = gridToGeo(tile.q, tile.r);
+      const worldPos = geoToWorld(geo.lon, geo.lat);
+      const hexCenterX = worldPos.x;
+      const hexCenterZ = worldPos.z;
+      const hexInnerR = 17.3; // ~20 * sqrt(3)/2 — approximate cell radius
 
       // Determine placement strategy
       const useForestGrid = isForestFeature(tile.feature);

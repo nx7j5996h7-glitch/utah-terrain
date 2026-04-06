@@ -9,15 +9,8 @@
  * Tints return [r, g, b, strength] to blend with existing vertex colors.
  */
 
-import {
-  HEX_SIZE,
-  GRID_SPACING,
-  UTAH_WEST,
-  UTAH_NORTH,
-  DEG_PER_HEX_LON,
-  DEG_PER_HEX_LAT,
-  SQRT3,
-} from '@/constants';
+import { GRID_SPACING, SQRT3 } from '@/constants';
+import { geoToWorld } from '@/core/geo/GeoCoord';
 
 // ── Height Profile Helpers ──────────────────────────────────────────────────
 
@@ -103,20 +96,11 @@ export interface LandmarkConfig {
   tintFn?: (dx: number, dz: number, dist: number) => [number, number, number, number] | null;
 }
 
-// ── Geo → world conversion (continuous hex math) ────────────────────────────
-
-function geoToWorld(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  const px = -HEX_SIZE * 1.5 * q;
-  const py = HEX_SIZE * (SQRT3 / 2 * q + SQRT3 * r);
-  return { x: px, z: -py };
-}
-
 // ── Landmark Definitions ────────────────────────────────────────────────────
 
 // Radius conversion: landmark radius in hex units → world units
-const HEX_WORLD_SCALE = HEX_SIZE * SQRT3;
+// Old HEX_SIZE=20, so this is 20 * sqrt(3) ≈ 34.64
+const HEX_WORLD_SCALE = 20 * SQRT3;
 
 // Pre-compute procedural positions for spire/hoodoo fields
 const BRYCE_SPIRES = hashPositions(18, 7723, 28);

@@ -1,33 +1,8 @@
 import * as THREE from 'three';
 import type { GameMap } from '@/core/map/GameMap';
-import { hexToPixel } from '@/core/hex/HexUtils';
-import { HEX_SIZE, MAP_WIDTH, MAP_HEIGHT } from '@/constants';
-
-// ---------------------------------------------------------------------------
-// HeightMapBaker — bakes terrain heights into an R-channel DataTexture
-// for per-pixel analytical normal computation in the fragment shader.
-//
-// Two-pass approach:
-//   Pass 1: scan all texels for min/max height
-//   Pass 2: normalize to 0-255 and write texture
-//
-// The shader can reconstruct world-space height via:
-//   h = uHeightMapRange.x + (sample.r) * uHeightMapRange.y
-// where uHeightMapRange = vec2(minH, rangeH)
-// ---------------------------------------------------------------------------
+import { computeWorldBounds } from '@/core/geo/GeoCoord';
 
 const RESOLUTION = 1024;
-
-/** Compute the world-space bounding box of the hex map. */
-function computeWorldBounds(): { minX: number; minZ: number; maxX: number; maxZ: number } {
-  const origin = hexToPixel({ q: 0, r: 0 }, HEX_SIZE);
-  const corner = hexToPixel({ q: MAP_WIDTH - 1, r: MAP_HEIGHT - 1 }, HEX_SIZE);
-  const minX = Math.min(origin.x, corner.x) - HEX_SIZE;
-  const maxX = Math.max(origin.x, corner.x) + HEX_SIZE;
-  const minY = Math.min(origin.y, corner.y) - HEX_SIZE;
-  const maxY = Math.max(origin.y, corner.y) + HEX_SIZE;
-  return { minX, minZ: -maxY, maxX, maxZ: -minY };
-}
 
 export class HeightMapBaker {
   private texture: THREE.DataTexture | null = null;

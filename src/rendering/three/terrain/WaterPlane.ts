@@ -5,8 +5,9 @@
  */
 
 import * as THREE from 'three';
-import { HEX_SIZE, WATER_PLANE_Y, UTAH_WEST, UTAH_NORTH, DEG_PER_HEX_LON, DEG_PER_HEX_LAT } from '@/constants';
+import { WATER_PLANE_Y } from '@/constants';
 import { WATER_BODIES } from '@/data/waterBodies';
+import { geoToWorld } from '@/core/geo/GeoCoord';
 
 const SUN_DIR = new THREE.Vector3(250, 280, -180).normalize();
 
@@ -158,18 +159,6 @@ void main() {
 }
 `;
 
-const SQRT3 = Math.sqrt(3);
-
-/** Convert geographic (lon,lat) to world-space (x,z) using continuous hex math. */
-function geoToWorld(lon: number, lat: number): { x: number; z: number } {
-  const q = (lon - UTAH_WEST) / DEG_PER_HEX_LON;
-  const r = (UTAH_NORTH - lat) / DEG_PER_HEX_LAT;
-  return {
-    x: -HEX_SIZE * 1.5 * q,
-    z: -(HEX_SIZE * (SQRT3 / 2 * q + SQRT3 * r)),
-  };
-}
-
 export class WaterPlane {
   private meshes: THREE.Mesh[] = [];
   private material: THREE.ShaderMaterial | null = null;
@@ -200,7 +189,7 @@ export class WaterPlane {
         if (w.z > maxZ) maxZ = w.z;
       }
 
-      const pad = HEX_SIZE * 3; // Extra padding to ensure full coverage of all water hexes
+      const pad = 60; // Extra padding to ensure full coverage
       minX -= pad; maxX += pad;
       minZ -= pad; maxZ += pad;
 
