@@ -5,6 +5,7 @@ import {
   MAX_DPR,
 } from '@/constants';
 import type { GameMap } from '@/core/map/GameMap';
+import { WORLD_BOUNDS } from '@/core/geo/GeoCoord';
 import { ThreeCamera } from './ThreeCamera';
 import { SceneLighting } from './effects/SceneLighting';
 import { AtmosphereEffect } from './effects/AtmosphereEffect';
@@ -110,7 +111,7 @@ export class ThreeRenderer {
       #endif
     `;
     // Warm haze matching Utah's clear desert sky with distant dust
-    this.scene.fog = new THREE.FogExp2(0xc8c4b8, 0.000010); // density scaled for ~430km world
+    this.scene.fog = new THREE.FogExp2(0xd0a880, 0.000008); // warm sunset haze for 1:1 world
 
     this.terrainGroup = new THREE.Group();
     this.terrainGroup.name = 'terrain';
@@ -284,6 +285,13 @@ export class ThreeRenderer {
         shader.uniforms.uRoadBounds = { value: roadBounds };
         shader.uniforms.uRegionMap = { value: regionTex };
         shader.uniforms.uRegionSize = { value: regionSize };
+        // Map bounds for border sunset fog
+        shader.uniforms.uMapBounds = {
+          value: new THREE.Vector4(
+            WORLD_BOUNDS.minX, WORLD_BOUNDS.minZ,
+            WORLD_BOUNDS.maxX, WORLD_BOUNDS.maxZ,
+          ),
+        };
       };
       mat.__overlayUniformsInjected = true;
       mat.needsUpdate = true;

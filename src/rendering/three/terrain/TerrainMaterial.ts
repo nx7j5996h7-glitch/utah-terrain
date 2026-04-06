@@ -118,6 +118,9 @@ const FRAG_HEADER = /* glsl */ `
   uniform vec4      uRiverBounds;      // minX, minZ, 1/rangeX, 1/rangeZ
   uniform vec3      uRiverColors[16];  // per-river colors
 
+  // Border sunset fog
+  uniform vec4      uMapBounds;        // minX, minZ, maxX, maxZ
+
   // Road overlay (R=SDF distance)
   uniform sampler2D uRoadSDF;
   uniform vec4      uRoadBounds;       // minX, minZ, 1/rangeX, 1/rangeZ
@@ -549,6 +552,50 @@ const FRAG_COLOR = /* glsl */ `
         float ao     = shadowSample.g; // G = ambient occlusion
         // Reduced multipliers to prevent over-darkening (CPU hillshade already dims)
         diffuseColor.rgb *= mix(1.0, shadow, 0.2) * mix(1.0, ao, 0.15);
+      }
+    }
+
+    // ===================================================================
+    //  Border sunset fog — warm ethereal glow beyond map edges
+    // ===================================================================
+    {
+      // Distance from map boundary (negative = inside, positive = outside)
+      float dLeft   = uMapBounds.x - vWorldPos.x;  // distance past left edge
+      float dRight  = vWorldPos.x - uMapBounds.z;   // distance past right edge
+      float dTop    = uMapBounds.y - vWorldPos.z;   // distance past top edge
+      float dBottom = vWorldPos.z - uMapBounds.w;    // distance past bottom edge
+      float borderDist = max(max(dLeft, dRight), max(dTop, dBottom));
+
+      // Noise-warped border for organic edge (bleeds ~5km into map)
+      float borderNoise = vnoise(vWorldPos.xz * 0.00005 + 77.0) * 8000.0;
+      float adjustedDist = borderDist + borderNoise - 3000.0;
+
+      if (adjustedDist > 0.0) {
+        // Sunset color palette — ethereal warm glow
+        float t = smoothstep(0.0, 40000.0, adjustedDist); // full over 40km
+        float tInner = smoothstep(0.0, 8000.0, adjustedDist); // inner warm band
+
+        // Layer sunset colors: golden → amber → deep rose → purple haze
+        vec3 sunsetGold   = vec3(0.95, 0.75, 0.45);
+        vec3 sunsetAmber  = vec3(0.90, 0.55, 0.30);
+        vec3 sunsetRose   = vec3(0.75, 0.40, 0.45);
+        vec3 sunsetPurple = vec3(0.45, 0.30, 0.50);
+
+        // Blend through sunset spectrum with noise variation
+        float colorNoise = vnoise(vWorldPos.xz * 0.00003 + 200.0);
+        vec3 sunsetColor = mix(sunsetGold, sunsetAmber, smoothstep(0.0, 0.35, t + colorNoise * 0.1));
+        sunsetColor = mix(sunsetColor, sunsetRose, smoothstep(0.25, 0.65, t + colorNoise * 0.08));
+        sunsetColor = mix(sunsetColor, sunsetPurple, smoothstep(0.55, 0.95, t));
+
+        // Add ethereal glow shimmer
+        float shimmer = vnoise(vWorldPos.xz * 0.0001 + uTime * 0.3) * 0.12;
+        sunsetColor += vec3(shimmer * 0.8, shimmer * 0.5, shimmer * 0.3);
+
+        // Opacity: starts at 40%, increases to ~90% (never fully opaque)
+        float fogAlpha = 0.4 * tInner + 0.50 * t;
+        fogAlpha = min(fogAlpha, 0.92);
+
+        diffuseColor.rgb = mix(diffuseColor.rgb, sunsetColor, fogAlpha);
       }
     }
   }
