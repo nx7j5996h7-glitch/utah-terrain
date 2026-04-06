@@ -18,8 +18,10 @@ Comprehensive documentation of how the Utah terrain visualization works, its str
 10. [Camera & Controls](#10-camera--controls)
 11. [Performance Analysis](#11-performance-analysis)
 12. [Visual Options & Tradeoffs](#12-visual-options--tradeoffs)
-13. [Comparison with Aveneg](#13-comparison-with-aveneg)
-14. [Known Issues & Future Work](#14-known-issues--future-work)
+13. [Loading Cost Analysis](#13-loading-cost-analysis)
+14. [Version History & Development](#14-version-history--development)
+15. [Comparison with Aveneg](#15-comparison-with-aveneg)
+16. [Known Issues & Future Work](#16-known-issues--future-work)
 
 ---
 
@@ -475,7 +477,252 @@ The per-river approach is more interesting but requires the river ID encoding in
 
 ---
 
-## 13. Comparison with Aveneg
+## 13. Loading Cost Analysis
+
+### Initial Load Breakdown
+
+The app performs these operations on first load, in sequence:
+
+| Step | What it does | Time (M2 Pro) | Data Size | Blocking? |
+|------|-------------|---------------|-----------|-----------|
+| 1. Heightmap fetch | Download `utah-elevation.png` from local server | 50-200ms | 7.6 MB | Yes (network) |
+| 2. Heightmap decode | Canvas drawImage + getImageData to decode RGB→elevation | 100-300ms | 20 MB decoded | Yes (CPU) |
+| 3. Map generation | `generateUtahMap()` — 22,400 tiles, polygon containment checks | 200-500ms | ~2 MB | Yes (CPU) |
+| 4. Terrain mesh build | `TerrainMeshBuilder.build()` — vertex generation, smoothing, carving | 3,000-8,000ms | ~180 MB GPU | Yes (CPU) |
+| 5. River rasterization | `RiverMap.build()` — 4096x4096 texture from 5504 waypoints | 200-400ms | 64 MB texture | Yes (CPU) |
+| 6. Road rasterization | `RoadMap.build()` — 4096x4096 SDF texture | 100-200ms | 16 MB texture | Yes (CPU) |
+| 7. Shadow baking | `ShadowBaker.build()` — 512x512 raymarch | 100-300ms | 1 MB texture | Yes (CPU) |
+| 8. Water planes | `WaterPlane.build()` — 14 plane meshes | <50ms | ~2 MB GPU | No |
+| 9. Vegetation scatter | `VegetationScatter.build()` — 163k instance placement | 500-1500ms | ~12 MB GPU | Yes (CPU) |
+| 10. UI initialization | City markers, labels, minimap, compass | <100ms | ~1 MB | No |
+| **Total** | | **5-12 seconds** | **~300 MB** | |
+
+### Step 4 Deep Dive — Terrain Build
+
+The terrain build (Step 4) dominates load time at 60-70% of total. Within it:
+
+| Sub-step | What | Time (ms) | Notes |
+|----------|------|-----------|-------|
+| Vertex positions + heights | Sample heightmap per vertex (3.8M calls) | 1500-3000 | `sampleRealHeight()` per vertex |
+| Vertex colors | `computeVariedColor()` with 5 noise evals per vertex | 800-2000 | Most expensive sub-step per vertex |
+| Coastal smoothing | 8-pass Laplacian on boundary vertices | 200-500 | Scales with coast length, not vertex count |
+| Landmark sculpting | 37 landmarks modify heights + colors | 100-300 | Only touches vertices within radius |
+| Boundary blending | 8-neighbor terrain type comparison per vertex | 300-600 | Skips interior vertices |
+| River valley carving | BFS + depression on river-adjacent vertices | 200-500 | Only river-adjacent vertices |
+| Chunk splitting | Sort vertices into 64 chunks + build BufferGeometry | 200-400 | Memory-bound (copying arrays) |
+
+### Loading Options & Their Costs
+
+#### Option A: Current Default (GRID_SPACING=250)
+- **Load time:** 5-8 seconds
+- **GPU memory:** ~300 MB
+- **Runtime FPS:** 30-50 fps (M2 Pro), 15-30 fps (M1 Air)
+- **Visual quality:** Good — visible tessellation on mountains, smooth deserts
+- **Best for:** Development, powerful hardware
+
+#### Option B: Fast Load (GRID_SPACING=400)
+- **Load time:** 2-4 seconds
+- **GPU memory:** ~180 MB
+- **Runtime FPS:** 55-60 fps (M2 Pro), 30-45 fps (M1 Air)
+- **Visual quality:** Strategy-game aesthetic — visible facets everywhere
+- **Best for:** Presentations, weaker hardware, when load time matters
+
+#### Option C: Quality (GRID_SPACING=150)
+- **Load time:** 12-20 seconds
+- **GPU memory:** ~500 MB
+- **Runtime FPS:** 15-30 fps (M2 Pro) — below target
+- **Visual quality:** Smooth mountains, minimal faceting
+- **Best for:** Screenshots, offline rendering — not real-time
+
+#### Option D: Ultra-Low-Poly (GRID_SPACING=600)
+- **Load time:** 1-2 seconds
+- **GPU memory:** ~80 MB
+- **Runtime FPS:** 60 fps (any hardware)
+- **Visual quality:** Deliberately low-poly, abstract
+- **Best for:** Mobile, embedded, rapid prototyping
+
+#### Option E: CDLOD Quadtree (not yet implemented)
+- **Load time:** <1 second (heightmap upload to GPU only)
+- **GPU memory:** ~50 MB + streaming tiles
+- **Runtime FPS:** 60 fps (50-150 patches visible)
+- **Visual quality:** 100m near camera, 1km far — best of all worlds
+- **Best for:** Production deployment — the correct solution
+
+### Texture Memory Budget
+
+| Texture | Resolution | Format | GPU Memory |
+|---------|-----------|--------|------------|
+| River map | 4096x4096 | RGBA8 | 64 MB |
+| Road SDF | 4096x4096 | R8 | 16 MB |
+| Heightmap (CPU only) | 2048x2560 | decoded RGBA | 20 MB CPU only |
+| Shadow/AO | 512x512 | RGBA8 | 1 MB |
+| Regional features | 160x140 | RGBA8 | <0.1 MB |
+| Sky gradient | 2x512 | RGBA8 | <0.1 MB |
+| **Total GPU textures** | | | **~81 MB** |
+
+The river/road textures at 4096x4096 are the largest memory consumers. Reducing to 2048x2048 saves ~60 MB but halves resolution (rivers become ~52m/texel, most rivers invisible).
+
+### Network Transfer
+
+| Asset | Size | Cached? |
+|-------|------|---------|
+| `utah-elevation.png` | 7.6 MB | Yes (browser cache) |
+| `utah-elevation-meta.json` | 0.2 KB | Yes |
+| JavaScript bundle | ~180 KB (gzip) | Yes |
+| CSS | 0.3 KB | Yes |
+| Country Roads MP3 (if present) | ~5 MB | Yes |
+| **First load** | **~13 MB** | |
+| **Repeat load** | **~0 MB** | (all cached) |
+
+### Background Tab Loading
+
+The terrain build uses `MessageChannel`-based yielding instead of `setTimeout` to avoid browser throttling in background tabs. Browsers throttle `setTimeout` to ~1 second intervals in background tabs, which would turn a 5-second build into 90+ seconds. `MessageChannel.postMessage` is not throttled.
+
+However, CSS animations (the loading bar) may still pause in background tabs — this is browser-controlled and cannot be overridden.
+
+---
+
+## 14. Version History & Development
+
+This project has undergone extensive iterative development over a long session with Claude Code. The history below documents the major architectural decisions, bugs, and pivots.
+
+### Pre-Git Era (v0.x — before version control)
+
+#### v0.1 — Initial Scaffold
+The project began as a Vite + TypeScript + Three.js scaffold with the goal of creating a geographically accurate 3D terrain map of Utah. The architecture was heavily inspired by the Aveneg/Trump: Total War project, which uses a hex-based terrain system for a Middle East strategy game. Multiple Claude Opus agents were deployed in parallel to research Aveneg's codebase and extract architectural patterns.
+
+Key systems adapted from Aveneg:
+- `MeshStandardMaterial` with `onBeforeCompile` GLSL injection
+- 15 procedural terrain type patterns
+- InstancedMesh vegetation with spatial grid LOD
+- Gerstner wave water planes
+- Custom fog shader chunk
+- Flat-top axial hex coordinate system (q, r)
+
+#### v0.2 — Geographic Data
+Extensive geographic research produced hand-authored polygon data for Utah's regions, terrain zones, mountain ranges, rivers, roads, cities, parks, geological formations, and feature zones. This data lives in `src/data/` as TypeScript arrays of [lon, lat] coordinate pairs.
+
+The data was researched by multiple parallel Claude agents studying Utah's geography, geology, ecology, and hydrology. Each data file represents dozens of hand-traced polygons covering the state.
+
+#### v0.3 — Real Elevation Data
+A critical improvement over Aveneg: instead of procedural noise for elevation, real USGS/SRTM elevation data was downloaded from AWS Terrain Tiles (Mapzen Terrarium format). A custom Node.js script (`scripts/fetch-heightmap-rgb.mjs`) downloads zoom-9 tiles covering Utah, stitches them, and encodes as a 2048x2560 RGB PNG with 16-bit precision (R*256+G).
+
+This immediately gave the map real mountain profiles, canyon depths, mesa formations, and valley shapes — all in correct geographic positions.
+
+#### v0.4 — The East/West Flip Saga
+One of the most persistent bugs: the map was mirrored east/west. Salt Lake City appeared on the wrong side of the Wasatch Mountains. This was eventually traced to the hex coordinate system's `hexToPixel` function, which needed a negated X axis to produce correct east-on-right orientation with the camera at azimuth=PI.
+
+The fix required negating X in `hexToPixel`, `pixelToHex`, and **nine separate `geoToWorld` functions** scattered across the codebase. Each had to match exactly, or rivers, roads, cities, and water bodies would drift from the terrain. This was the strongest argument for eventually removing hex coordinates entirely.
+
+#### v0.5 — Water Rendering Iterations
+Water rendering went through many iterations:
+1. **Full-map water plane** — a single plane covering the entire map. Caused water to bleed through mountain valleys and canyon floors.
+2. **Sunken water vertices** — water hex tiles placed at Y=-1.5. Created 50+ unit canyon cliffs at every lake edge where real heightmap terrain met the fixed-low water.
+3. **Per-lake water planes** — individual planes for each water body polygon. Eliminated bleeding but rectangular bounding boxes extend beyond lake shapes.
+4. **Transparent water** — alpha-blended water. Looked washed out at distance due to fog interaction. Changed to fully opaque.
+5. **Water vertices at terrain level** — water hex vertices placed at Y=0 (water plane level) instead of sunken. Prevented canyon walls at lake edges.
+6. **Water vertices at real elevation** (current) — sample the real heightmap and place water vertices 5m below terrain. Lakes sit flush with surroundings.
+
+#### v0.6 — River Rendering Iterations
+Rivers also went through major changes:
+1. **Terrain type override** — rivers changed terrain type to `river_valley`, creating bright green bands across mountain slopes. Unrealistic.
+2. **Shader overlay only** — rivers only set the `waterway` property; rendering is purely in the fragment shader as a blue-tint overlay on whatever terrain they cross. This is the current approach.
+3. **Valley carving added** — CPU-side height depression along river paths so rivers sit in carved channels.
+4. **Valley depth calibrated** — initially 2.0 (invisible), increased to 15.0, then to 150m at 1:1 scale.
+
+#### v0.7 — Vegetation System
+The vegetation system was built to match Aveneg's but with Utah-specific ecology:
+- 12 vegetation types (Aveneg has similar variety for Middle East)
+- Region-aware density tables (Mojave gets cactus + joshua tree, High Plateaus get conifer boost)
+- Feature overrides (pinyon_juniper, dense_forest/forest/woodland tiers)
+- Riparian boost near waterways
+
+A critical bug: `VegetationScatter.updateLOD()` was never called in the render loop, making all vegetation invisible. Fixed by adding calls in both `render()` and `renderIfDirty()`.
+
+#### v0.8 — Visual Polish
+Multiple passes of visual refinement:
+- **Tessellation visibility** — hillshade step was too small (3.0), making every triangle visible. Increased to 8.0 (now 500m at 1:1).
+- **Pan speed** — went through 4→0.8→0.25 with altitude scaling to feel right.
+- **Compass orientation** — was 180 degrees wrong due to azimuth=PI offset. Fixed with `+PI` in rotation.
+- **Color accuracy** — salt flats changed to #F5F3F0, desert to #D4BA88 to match real Utah.
+- **Smoothing passes** — global smoothing set to 0 (real data doesn't need it), mountain smoothing set to 0.
+- **Fog** — custom shader chunk with clear-to-250-units + gentle exp² ramp, capped at 75% opacity.
+
+#### v0.9 — Border Cleanup
+Dead code removal:
+- `BorderHexMesh.ts` — floating hex outlines, removed
+- `ParkBoundaries.ts` — park boundary outlines, removed (floated in space)
+- `EventBus.ts` — never imported, deleted
+- Grid overlay — toggled with G key, now a no-op stub
+
+### Git Era
+
+#### v1.0 — Initial Git Commit
+First `git init` and initial commit. 53 TypeScript files, TSC clean, build passing.
+
+#### v1.1 — Hex Geometry Removal
+**The biggest architectural change.** The entire hex coordinate system (HexCoord.ts, HexUtils.ts, HexGrid.ts) was removed and replaced with direct geographic (lon/lat) → world-space conversion via `GeoCoord.ts`.
+
+Motivation:
+- Hex quantization caused persistent texture boundary artifacts
+- The map is a visualization, not a game — hex tiles served no purpose
+- 9 different `geoToWorld` functions had to stay synchronized
+- The sheared hex projection caused multiple coordinate bugs
+
+The new system:
+- `geoToWorld(lon, lat)` and `worldToGeo(wx, wz)` as canonical functions
+- `sampleTerrainAt(lon, lat)` for continuous terrain sampling (no tile quantization)
+- GameMap simplified from `HexGrid<Tile>` to plain `Map<string, Tile>`
+- 6 dead files deleted, 20+ files updated, zero TSC errors
+
+Verified numerically: new coordinates match old to within 10⁻¹² precision.
+
+#### v2.0 — River Overhaul + 1:1 Metric Scale (current)
+
+Two major changes in one release:
+
+**Rivers:**
+- OSM Overpass API fetch script created (`scripts/fetch-rivers-osm.mjs`)
+- 11 rivers fetched with 5504 total waypoints (was 15 rivers with ~600 points)
+- Per-river colors matching real geology (Colorado = red-brown, Bear = blue-green)
+- River ID encoded in texture G channel for shader color lookup
+- River blend increased from 85% to 95% with center darkening
+- River texture increased from 2048 to 4096 resolution
+
+**1:1 Metric Scale:**
+- `GeoCoord.ts` rewritten with proper equirectangular metric projection
+- 1 world unit = 1 meter (was ~91 meters)
+- World bounds: 429,000 x 556,600 meters
+- `VERTICAL_EXAGGERATION = 1.0` (no exaggeration)
+- `logarithmicDepthBuffer: true` (near=10, far=1,000,000)
+- All shader noise frequencies divided by ~89
+- All distance-based constants (LOD, fog, camera, smoothing) scaled
+- All tree geometries rescaled to real meters (conifer: 20m, sagebrush: 1m)
+- Per-lake real surface elevations (Bear Lake at 1805m, Fish Lake at 2713m)
+- Heightmap returns real meters relative to GSL datum (1280m)
+
+**Additional v2.0 changes:**
+- Ethereal sunset border fog beyond map edges
+- Sky dome upgraded with sunset horizon band
+- 25 MB unused elevation files deleted
+- MessageChannel yield for background tab loading
+- Parallel dynamic imports in main.ts
+- Coastal smoothing reduced from 12 to 8 passes
+- Comprehensive MAP_MAKING_GUIDE.md rewrite
+
+### Development Methodology
+
+The project was developed entirely through Claude Code (Anthropic's CLI for Claude), using Claude Opus 4.6 with 1M context. Key patterns:
+
+- **Parallel research agents** — up to 5 Opus subagents deployed simultaneously for deep research (Utah geography, Aveneg architecture, river geodata, LOD techniques, vegetation rendering)
+- **Iterative visual refinement** — the user viewed the map frequently, identified issues (east/west flip, water depth, tessellation visibility), and directed fixes
+- **Audit-driven development** — a comprehensive 24-category audit prompt (AUDIT_PROMPT.md) was created to verify system coherence after multi-agent changes
+- **Sconce** — a companion cactus in the CLI occasionally pointed out code bugs (like boundary check logic)
+- **Context management** — the project accumulated enough context that conversation compaction was needed multiple times, with comprehensive summaries preserved
+
+---
+
+## 15. Comparison with Aveneg
 
 Aveneg (Trump: Total War) is the reference project this map was architecturally based on. Key differences:
 
@@ -525,7 +772,7 @@ Aveneg uses hex coordinates as a gameplay foundation — every system (movement,
 
 ---
 
-## 14. Known Issues & Future Work
+## 16. Known Issues & Future Work
 
 ### Known Issues
 
