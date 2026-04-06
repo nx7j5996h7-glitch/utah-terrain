@@ -9,9 +9,9 @@ const TIER_MEDIUM = 10_000;
 const TIER_SMALL  = 5_000;
 
 // ── LOD distances ──────────────────────────────────────────────────────────
-const LABEL_DIST_LARGE = 800;
-const LABEL_DIST_SMALL = 400;
-const MARKER_DIST      = 1500;
+const LABEL_DIST_LARGE = 70000;  // 70km — visible from far overview
+const LABEL_DIST_SMALL = 35000;  // 35km
+const MARKER_DIST      = 130000; // 130km
 
 interface CityEntry {
   marker: THREE.Mesh;

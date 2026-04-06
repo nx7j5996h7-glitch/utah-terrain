@@ -30,35 +30,39 @@ async function init(): Promise<void> {
   setLoadingProgress(2, 'Loading elevation data...');
   const { loadHeightmap } = await import('@/rendering/RealHeightMap');
   await loadHeightmap();
-  setLoadingProgress(8, 'Elevation data loaded');
+  setLoadingProgress(5, 'Elevation data loaded');
 
-  setLoadingProgress(10, 'Generating map data...');
+  setLoadingProgress(6, 'Generating map data...');
 
-  // Phase 1: Generate Utah map data
-  const { generateUtahMap } = await import('@/core/map/UtahMapData');
+  // Phase 1: Generate Utah map data (parallel imports)
+  const [{ generateUtahMap, GRID_COLS, GRID_ROWS }, { GameMap }] = await Promise.all([
+    import('@/core/map/UtahMapData'),
+    import('@/core/map/GameMap'),
+  ]);
   const tileData = generateUtahMap();
-  setLoadingProgress(15, `Generated ${tileData.length} tiles`);
+  setLoadingProgress(8, `Generated ${tileData.length} tiles`);
 
   // Phase 2: Create GameMap
-  const { GameMap } = await import('@/core/map/GameMap');
-  const { GRID_COLS, GRID_ROWS } = await import('@/core/map/UtahMapData');
   const gameMap = new GameMap(GRID_COLS, GRID_ROWS);
   gameMap.loadTiles(tileData);
-  setLoadingProgress(20, 'Map loaded');
+  setLoadingProgress(10, 'Map loaded');
 
   // Phase 3: Initialize Three.js renderer
-  setLoadingProgress(30, 'Initializing renderer...');
+  setLoadingProgress(11, 'Initializing renderer...');
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   if (!canvas) throw new Error('Canvas element #game-canvas not found');
 
   const renderer = new ThreeRenderer();
   renderer.init(canvas);
-  setLoadingProgress(40, 'Renderer initialized');
+  setLoadingProgress(15, 'Renderer initialized');
 
-  // Phase 4: Build terrain mesh
-  setLoadingProgress(50, 'Building terrain...');
-  await renderer.buildTerrain(gameMap);
-  setLoadingProgress(90, 'Terrain built');
+  // Phase 4: Build terrain mesh (this is ~80% of total load time)
+  setLoadingProgress(16, 'Building terrain...');
+  await renderer.buildTerrain(gameMap, (fraction, label) => {
+    // Map terrain fraction (0-1) into the 16-95% range
+    setLoadingProgress(16 + Math.round(fraction * 79), label);
+  });
+  setLoadingProgress(95, 'Terrain built');
 
   // Log map stats
   const landTiles = gameMap.getLandTiles();
@@ -172,7 +176,7 @@ async function init(): Promise<void> {
 
   // Phase 6: Start render loop
   setLoadingProgress(100, 'Ready');
-  setTimeout(dismissLoading, 300);
+  dismissLoading();
 
   let lastTimestamp = 0;
   function loop(timestamp: number): void {
@@ -203,4 +207,15 @@ async function init(): Promise<void> {
   window.addEventListener('resize', () => renderer.resize());
 }
 
-init().catch(console.error);
+init().catch((err) => {
+  console.error(err);
+  const bar = document.getElementById('loading-bar');
+  const statusEl = document.getElementById('loading-status');
+  const screen = document.getElementById('loading-screen');
+  if (bar) bar.style.background = '#c44';
+  if (statusEl) {
+    statusEl.textContent = `Failed to load: ${err?.message ?? 'Unknown error'}`;
+    statusEl.style.color = '#c44';
+  }
+  if (screen) screen.classList.add('error');
+});

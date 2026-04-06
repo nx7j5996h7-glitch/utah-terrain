@@ -29,7 +29,7 @@ export class ThreeCamera {
 
   constructor(canvas: HTMLCanvasElement) {
     const aspect = canvas.clientWidth / canvas.clientHeight;
-    this.camera = new THREE.PerspectiveCamera(50, aspect, 1, 5000);
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 10, 1000000);
 
     // Map center from geographic bounds
     const cx = WORLD_CENTER.x;
@@ -50,7 +50,7 @@ export class ThreeCamera {
 
     // North at top: camera south of center, looking northward (+z)
     // Note: east (+x) appears on screen LEFT at this angle — compass shows true directions
-    const initDist = 280;
+    const initDist = 50000; // ~50km altitude for full-map overview
     const initPolar = 0.8;
     const initAzimuth = Math.PI;
     this.camera.position.set(
@@ -112,7 +112,7 @@ export class ThreeCamera {
     this._panRight.crossVectors(this._panFwd, ThreeCamera._UP).normalize();
 
     const camHeight = Math.max(1, this.camera.position.y);
-    const distScale = Math.max(0.08, camHeight / 150);
+    const distScale = Math.max(0.08, camHeight / 15000); // scaled for 1:1 metric world
 
     const dx = (this._panFwd.x * forward + this._panRight.x * right) * distScale;
     const dz = (this._panFwd.z * forward + this._panRight.z * right) * distScale;
@@ -195,7 +195,7 @@ export class ThreeCamera {
       if (this.getTerrainHeight) {
         const terrainY = this.getTerrainHeight(this.camera.position.x, this.camera.position.z);
         // Always stay at least 8 world units above terrain surface
-        minY = Math.max(minY, terrainY + 8);
+        minY = Math.max(minY, terrainY + 100); // 100m above terrain at 1:1
       }
       if (this.camera.position.y < minY) {
         this.camera.position.y = minY;

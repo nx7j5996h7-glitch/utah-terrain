@@ -18,7 +18,7 @@ import { sampleElevationGeo, isHeightmapLoaded } from '@/rendering/RealHeightMap
 import { WATER_BODIES } from '@/data/waterBodies';
 import { REGIONS, TERRAIN_ZONES } from '@/data/regions';
 import { MOUNTAIN_RANGES } from '@/data/mountains';
-import { RIVERS } from '@/data/rivers';
+import { RIVERS } from '@/data/rivers-detailed';
 import { ROADS } from '@/data/roads';
 import { CITIES } from '@/data/cities';
 import { FEATURE_ZONES } from '@/data/featureZones';
@@ -27,7 +27,7 @@ import { PARKS } from '@/data/parks';
 
 // Re-export for use by rendering systems
 export { MOUNTAIN_RANGES } from '@/data/mountains';
-export { RIVERS } from '@/data/rivers';
+export { RIVERS } from '@/data/rivers-detailed';
 export { ROADS } from '@/data/roads';
 export { PARKS } from '@/data/parks';
 export { CITIES } from '@/data/cities';

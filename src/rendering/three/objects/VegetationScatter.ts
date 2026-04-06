@@ -206,7 +206,7 @@ function getForestTier(feature: TerrainFeature | undefined): ForestTier | null {
 
 // ── Spatial Grid ───────────────────────────────────────────────────────────
 
-const SPATIAL_CELL_SIZE = 100;
+const SPATIAL_CELL_SIZE = 10000; // 10km cells at 1:1 metric scale
 
 interface VegInstance {
   x: number;
@@ -733,7 +733,7 @@ export class VegetationScatter {
       const worldPos = geoToWorld(geo.lon, geo.lat);
       const hexCenterX = worldPos.x;
       const hexCenterZ = worldPos.z;
-      const hexInnerR = 17.3; // ~20 * sqrt(3)/2 — approximate cell radius
+      const hexInnerR = 1500; // ~cell radius in meters at 1:1 scale
 
       // Determine placement strategy
       const useForestGrid = isForestFeature(tile.feature);

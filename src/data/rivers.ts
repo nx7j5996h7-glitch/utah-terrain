@@ -8,10 +8,45 @@
 export interface WaterwayDef {
   name: string;
   points: [number, number][]; // [lon, lat] waypoints tracing the river course
-  width: number;              // relative width (0.3-1.2)
+  width: number;              // relative width (0.3-1.2) — legacy, used if widthMeters absent
+  widthMeters?: number;       // actual river width in meters
+  color?: [number, number, number]; // per-river linear RGB color
   valleyDepth?: number;       // 0-1 (0=flat, 1=deep gorge)
   valleyWidth?: number;       // multiplier for valley bank width
   navigable?: boolean;
+}
+
+/**
+ * Default per-river colors based on Utah geology.
+ * Colorado/San Juan: muddy red-brown from red sandstone silt
+ * Green River: greenish (dam traps sediment), transitioning to olive-brown downstream
+ * Bear/Weber/Provo: blue-green mountain streams
+ * Virgin: clear milky green-blue
+ * Dirty Devil: extremely muddy dark red-brown
+ */
+export const RIVER_COLORS: Record<string, [number, number, number]> = {
+  'Colorado River':    [0.55, 0.35, 0.17],
+  'Green River':       [0.45, 0.50, 0.35],
+  'San Juan River':    [0.55, 0.35, 0.17],
+  'Virgin River':      [0.25, 0.55, 0.50],
+  'Bear River':        [0.15, 0.42, 0.52],
+  'Sevier River':      [0.35, 0.40, 0.30],
+  'Weber River':       [0.15, 0.42, 0.52],
+  'Provo River':       [0.15, 0.42, 0.52],
+  'Jordan River':      [0.20, 0.38, 0.45],
+  'Duchesne River':    [0.40, 0.38, 0.28],
+  'Price River':       [0.40, 0.38, 0.28],
+  'San Rafael River':  [0.40, 0.38, 0.28],
+  'Fremont River':     [0.48, 0.35, 0.22],
+  'Dirty Devil River': [0.48, 0.29, 0.19],
+  'Escalante River':   [0.30, 0.45, 0.40],
+  'Dolores River':     [0.50, 0.32, 0.18],
+  'White River':       [0.40, 0.40, 0.32],
+};
+
+/** Get the per-river color, falling back to a default blue-green. */
+export function getRiverColor(name: string): [number, number, number] {
+  return RIVER_COLORS[name] ?? [0.15, 0.42, 0.52];
 }
 
 export const RIVERS: WaterwayDef[] = [

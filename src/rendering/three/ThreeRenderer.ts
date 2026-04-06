@@ -25,7 +25,7 @@ import { GridOverlay } from './overlays/GridOverlay';
 import { WeatherParticles } from './effects/WeatherParticles';
 import { GraphicsSettingsManager, type GraphicsSettingsData, type QualityPreset } from '@/rendering/GraphicsSettings';
 import { RenderScheduler } from '@/rendering/RenderScheduler';
-import { RIVERS } from '@/data/rivers';
+import { RIVERS } from '@/data/rivers-detailed';
 import { ROADS } from '@/data/roads';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -83,6 +83,7 @@ export class ThreeRenderer {
       alpha: false,
       stencil: false,
       depth: true,
+      logarithmicDepthBuffer: true, // required for 1:1 metric scale (near=10, far=1M)
     });
     this.renderer.setPixelRatio(dpr);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -100,7 +101,7 @@ export class ThreeRenderer {
     THREE.ShaderChunk.fog_fragment = /* glsl */ `
       #ifdef USE_FOG
         #ifdef FOG_EXP2
-          float fogDepthShifted = max( 0.0, vFogDepth - 250.0 );
+          float fogDepthShifted = max( 0.0, vFogDepth - 25000.0 );
           float fogFactor = ( 1.0 - exp( - fogDensity * fogDensity * fogDepthShifted * fogDepthShifted ) ) * 0.75;
         #else
           float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
@@ -109,7 +110,7 @@ export class ThreeRenderer {
       #endif
     `;
     // Warm haze matching Utah's clear desert sky with distant dust
-    this.scene.fog = new THREE.FogExp2(0xc8c4b8, 0.0010);
+    this.scene.fog = new THREE.FogExp2(0xc8c4b8, 0.000010); // density scaled for ~430km world
 
     this.terrainGroup = new THREE.Group();
     this.terrainGroup.name = 'terrain';
@@ -195,8 +196,16 @@ export class ThreeRenderer {
 
   // ── Main terrain build ─────────────────────────────────────────────────────
 
-  async buildTerrain(gameMap: GameMap): Promise<void> {
-    const yieldFn = () => new Promise<void>(r => setTimeout(r, 0));
+  async buildTerrain(
+    gameMap: GameMap,
+    onProgress?: (fraction: number, label: string) => void,
+  ): Promise<void> {
+    // MessageChannel yield — not throttled in background tabs (unlike setTimeout)
+    const yieldFn = () => new Promise<void>(r => {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => r();
+      ch.port2.postMessage(null);
+    });
 
     // 0. Build river map FIRST so valley carving data is available during terrain build
     this.riverMap.build(RIVERS, gameMap);
@@ -204,7 +213,7 @@ export class ThreeRenderer {
       const riverRaw = this.riverMap.getRawData();
       const rb = this.riverMap.getBounds();
       this.terrainBuilder.setRiverData(
-        riverRaw, 2048,
+        riverRaw, 4096,
         { x: rb.x, y: rb.y, z: rb.z, w: rb.w },
       );
     } catch {
@@ -212,7 +221,7 @@ export class ThreeRenderer {
     }
 
     // 1. Build terrain mesh (publishes tile heights and mountain depths to gameMap)
-    const geometries = await this.terrainBuilder.build(gameMap, yieldFn);
+    const geometries = await this.terrainBuilder.build(gameMap, yieldFn, onProgress);
 
     // 2. Create chunk meshes
     for (const geom of geometries) {
@@ -270,6 +279,7 @@ export class ThreeRenderer {
         }
         shader.uniforms.uRiverMap = { value: riverTex };
         shader.uniforms.uRiverBounds = { value: riverBounds };
+        shader.uniforms.uRiverColors = { value: this.riverMap.getRiverColorsVec3Array() };
         shader.uniforms.uRoadSDF = { value: roadTex };
         shader.uniforms.uRoadBounds = { value: roadBounds };
         shader.uniforms.uRegionMap = { value: regionTex };

@@ -98,9 +98,9 @@ export interface LandmarkConfig {
 
 // ── Landmark Definitions ────────────────────────────────────────────────────
 
-// Radius conversion: landmark radius in hex units → world units
-// Old HEX_SIZE=20, so this is 20 * sqrt(3) ≈ 34.64
-const HEX_WORLD_SCALE = 20 * SQRT3;
+// Radius conversion: landmark radius to world meters
+// At 1:1 metric scale, each landmark radius unit ≈ 3000m (typical park/canyon extent)
+const HEX_WORLD_SCALE = 3000;
 
 // Pre-compute procedural positions for spire/hoodoo fields
 const BRYCE_SPIRES = hashPositions(18, 7723, 28);

@@ -56,7 +56,7 @@ const VERTEX_MAIN = /* glsl */ `
   vRiverDepth = 0.0;
   vRiverWaveHeight = 0.0;
   bool vertexDisplaced = false;
-  float rvDistFade = smoothstep(450.0, 250.0, vCamDist);
+  float rvDistFade = smoothstep(40000.0, 22000.0, vCamDist);
   vec2 rvUV = (vWorldPos.xz - uRiverBounds.xy) * uRiverBounds.zw;
   if (rvUV.x >= 0.0 && rvUV.x <= 1.0 && rvUV.y >= 0.0 && rvUV.y <= 1.0) {
     vec4 rvSample = texture2D(uRiverMap, rvUV);
@@ -67,7 +67,7 @@ const VERTEX_MAIN = /* glsl */ `
     if (rvMask > 0.01 && rvMask < 0.6 && rvDistFade > 0.01) {
       float bankT = rvMask / 0.6;
       float bankBlend = bankT * bankT * rvDistFade;
-      transformed.y -= bankBlend * rvSample.a * 0.3;
+      transformed.y -= bankBlend * rvSample.a * 30.0; // meters at 1:1 scale
       vertexDisplaced = true;
     }
 
@@ -76,12 +76,12 @@ const VERTEX_MAIN = /* glsl */ `
       float waveStr = smoothstep(0.05, 0.2, rvMask) * rvDistFade;
       vec2 wDir1 = normalize(vec2(0.7, 0.7));
       vec2 wDir2 = normalize(vec2(-0.5, 0.86));
-      float k1 = 6.2832 / 14.0;
-      float a1 = 0.07 / k1 * waveStr;
-      float f1 = k1 * (dot(wDir1, vWorldPos.xz) - 3.5 * uTime);
-      float k2 = 6.2832 / 9.0;
-      float a2 = 0.055 / k2 * waveStr;
-      float f2 = k2 * (dot(wDir2, vWorldPos.xz) - 3.5 * uTime);
+      float k1 = 6.2832 / 1200.0;   // wavelength ~1.2km at 1:1 scale
+      float a1 = 6.0 / k1 * waveStr; // amplitude ~6m
+      float f1 = k1 * (dot(wDir1, vWorldPos.xz) - 300.0 * uTime);
+      float k2 = 6.2832 / 800.0;    // wavelength ~800m
+      float a2 = 4.5 / k2 * waveStr;
+      float f2 = k2 * (dot(wDir2, vWorldPos.xz) - 300.0 * uTime);
       transformed.y += a1 * sin(f1) + a2 * sin(f2);
       vRiverWaveHeight = (a1 * sin(f1) + a2 * sin(f2));
       vertexDisplaced = true;
@@ -113,9 +113,10 @@ const FRAG_HEADER = /* glsl */ `
   uniform vec4      uShadowBounds;     // minX, minZ, maxX, maxZ
   uniform int       uShadowEnabled;
 
-  // River overlay (R=mask, A=valleyDepth)
+  // River overlay (R=mask, G=riverId, B=flowAngle, A=valleyDepth)
   uniform sampler2D uRiverMap;
   uniform vec4      uRiverBounds;      // minX, minZ, 1/rangeX, 1/rangeZ
+  uniform vec3      uRiverColors[16];  // per-river colors
 
   // Road overlay (R=SDF distance)
   uniform sampler2D uRoadSDF;
@@ -176,7 +177,7 @@ const FRAG_HEADER = /* glsl */ `
     float v = 0.0;
     float a = 0.5;
     mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-    int octaves = (dist < 400.0) ? 3 : 2;
+    int octaves = (dist < 36000.0) ? 3 : 2;
     for (int i = 0; i < 3; i++) {
       if (i >= octaves) break;
       v += a * vnoise(p);
@@ -209,7 +210,9 @@ const FRAG_HEADER = /* glsl */ `
 const FRAG_COLOR = /* glsl */ `
   {
     // ---- coordinate shorthands ----
-    vec2 wp = vWorldPos.xz;
+    // Scale world position for noise sampling — 1:1 metric scale is ~89x larger
+    // than original system, so divide by 89 to preserve noise patterns
+    vec2 wp = vWorldPos.xz * 0.0112;
     float ht = vWorldPos.y;
     int tt = int(vTerrainType + 0.5); // round to nearest int
 
@@ -268,7 +271,7 @@ const FRAG_COLOR = /* glsl */ `
       float bedding = mix(bed30, bed60, 0.5);
 
       // Desert varnish — dark vertical noise bands (manganese/iron oxide streaks)
-      float varnish = vnoise(vec2(wp.x * 0.15, ht * 0.3)) * 0.5 + 0.5;
+      float varnish = vnoise(vec2(wp.x * 0.15, ht * 0.003)) * 0.5 + 0.5;
       varnish = smoothstep(0.35, 0.65, varnish) * -0.08;
 
       // Fine grain
@@ -310,17 +313,17 @@ const FRAG_COLOR = /* glsl */ `
     // 6  mountain — 5-zone altitude coloring, cliff shading, strata
     // ---------------------------------------------------------------
     else if (tt == 6) {
-      // Height thresholds with noise warp
-      float nw = vnoise(wp * 0.04) * 8.0;
+      // Height thresholds with noise warp (meters at 1:1 scale)
+      float nw = vnoise(wp * 0.04) * 200.0;
       float h = ht + nw;
 
       // 5 altitude zones (dark olive → warm brown → grey-brown → light grey → pale peak)
       vec3 zoneColor = vec3(0.0);
-      if (h < 15.0)      zoneColor = vec3(-0.06, -0.02,  0.00); // dark olive
-      else if (h < 30.0) zoneColor = vec3( 0.04,  0.01, -0.02); // warm brown
-      else if (h < 50.0) zoneColor = vec3( 0.01,  0.01,  0.01); // grey-brown
-      else if (h < 70.0) zoneColor = vec3( 0.05,  0.05,  0.05); // light grey
-      else                zoneColor = vec3( 0.10,  0.10,  0.10); // pale peak
+      if (h < 500.0)       zoneColor = vec3(-0.06, -0.02,  0.00); // dark olive (foothills)
+      else if (h < 1200.0) zoneColor = vec3( 0.04,  0.01, -0.02); // warm brown (montane)
+      else if (h < 2000.0) zoneColor = vec3( 0.01,  0.01,  0.01); // grey-brown (subalpine)
+      else if (h < 2600.0) zoneColor = vec3( 0.05,  0.05,  0.05); // light grey (alpine)
+      else                  zoneColor = vec3( 0.10,  0.10,  0.10); // pale peak
 
       // Slope-based cliff darkening via screen-space derivatives
       vec3 dpdx = dFdx(vWorldPos);
@@ -335,7 +338,7 @@ const FRAG_COLOR = /* glsl */ `
       vec3 cliffDarkenVec = -vec3(cliffDark, cliffDark, cliffDark * 0.7);
 
       // Geological strata lines on steep faces
-      float strataLine = sin(vWorldPos.y * 1.8 + vnoise(wp * 0.08) * 4.0) * 0.5 + 0.5;
+      float strataLine = sin(vWorldPos.y * 0.02 + vnoise(wp * 0.08) * 4.0) * 0.5 + 0.5;
       strataLine = smoothstep(0.3, 0.7, strataLine);
       vec3 strataColor = vec3(strataLine * 0.04, strataLine * 0.03, strataLine * 0.02) * smoothstep(0.3, 0.6, steepness);
 
@@ -495,7 +498,7 @@ const FRAG_COLOR = /* glsl */ `
     diffuseColor.rgb += colorShift;
 
     // ===================================================================
-    //  River overlay — blue tint along rivers
+    //  River overlay — per-river color from geology
     // ===================================================================
     {
       vec2 rvUV = (wp - uRiverBounds.xy) * uRiverBounds.zw;
@@ -503,13 +506,17 @@ const FRAG_COLOR = /* glsl */ `
         vec4 rvSample = texture2D(uRiverMap, rvUV);
         float rvMask = smoothstep(0.05, 0.35, rvSample.r);
         if (rvMask > 0.01) {
-          // River water tint — dark blue-green
-          vec3 riverColor = vec3(0.15, 0.42, 0.52); // Exact match: WaterPlane shallowColor
+          // Per-river color lookup from G channel (encoded as riverId * 17/255)
+          int riverId = int(rvSample.g * 15.0 + 0.5);
+          riverId = clamp(riverId, 0, 15);
+          vec3 riverColor = uRiverColors[riverId];
+          // Darken center for depth — matches lake appearance
+          riverColor *= 0.65 + 0.35 * (1.0 - rvMask);
           // Bank zone: darken terrain near river edges
           float bankMask = smoothstep(0.01, 0.15, rvSample.r) * (1.0 - rvMask);
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.75, bankMask * 0.4);
-          // Water zone: blend toward river color
-          diffuseColor.rgb = mix(diffuseColor.rgb, riverColor, rvMask * 0.85);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.70, bankMask * 0.5);
+          // Water zone: strong blend toward river color (0.95 = very opaque water)
+          diffuseColor.rgb = mix(diffuseColor.rgb, riverColor, rvMask * 0.95);
         }
       }
     }
@@ -553,12 +560,12 @@ const FRAG_COLOR = /* glsl */ `
 const FRAG_BUMP = /* glsl */ `
   {
     float bumpDist = length(cameraPosition - vWorldPos);
-    float bumpFade = smoothstep(500.0, 150.0, bumpDist);
+    float bumpFade = smoothstep(45000.0, 13000.0, bumpDist);
 
     if (bumpFade > 0.01) {
       int tt = int(vTerrainType + 0.5);
       float bumpScale = 0.0;
-      float bumpFreq = 0.3;
+      float bumpFreq = 0.0034; // 0.3 / 89 for 1:1 metric scale
 
       if      (tt == 0)  bumpScale = 0.04;  // salt_flat (subtle)
       else if (tt == 1)  bumpScale = 0.07;  // desert (dune ridges)
@@ -566,7 +573,7 @@ const FRAG_BUMP = /* glsl */ `
       else if (tt == 3)  bumpScale = 0.12;  // red_sandstone (cross-bedding)
       else if (tt == 4)  bumpScale = 0.08;  // white_sandstone
       else if (tt == 5)  bumpScale = 0.05;  // canyon_floor
-      else if (tt == 6) { bumpScale = 0.20; bumpFreq = 0.18; } // mountain (dramatic)
+      else if (tt == 6) { bumpScale = 0.20; bumpFreq = 0.002; } // mountain (dramatic)
       else if (tt == 7)  bumpScale = 0.06;  // conifer_forest
       else if (tt == 8)  bumpScale = 0.10;  // alpine (rocky)
       else if (tt == 9)  bumpScale = 0.05;  // river_valley

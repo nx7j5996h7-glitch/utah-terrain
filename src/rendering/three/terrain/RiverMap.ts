@@ -1,38 +1,68 @@
 import * as THREE from 'three';
-import type { WaterwayDef } from '@/data/rivers';
+import type { WaterwayDef } from '@/data/rivers-detailed';
 import type { GameMap } from '@/core/map/GameMap';
 import { geoToWorld, computeWorldBounds } from '@/core/geo/GeoCoord';
 
-const TEX_SIZE = 2048;
+import { getRiverColor } from '@/data/rivers';
 
-/** Rasterizes river paths into a 2048x2048 RGBA DataTexture for the terrain shader. */
+const TEX_SIZE = 4096;
+
+/** Rasterizes river paths into a 4096x4096 RGBA DataTexture for the terrain shader.
+ *
+ *  Channel encoding:
+ *    R = river mask (0-255, antialiased)
+ *    G = river ID (0-15, used for per-river color lookup in shader)
+ *    B = flow angle (0-255 = 0-360 degrees)
+ *    A = valley depth (0-255)
+ */
 export class RiverMap {
   private texture: THREE.DataTexture | null = null;
   private rawData: Uint8Array | null = null;
   private bounds = new THREE.Vector4(0, 0, 1, 1);
+  private riverColors: [number, number, number][] = [];
+
+  /** Get per-river color array for shader uniform. */
+  /** Get per-river colors as THREE.Vector3 array for shader uniform vec3[16]. */
+  getRiverColorsVec3Array(): THREE.Vector3[] {
+    const arr: THREE.Vector3[] = [];
+    for (let i = 0; i < 16; i++) {
+      const c = this.riverColors[i] ?? [0.15, 0.42, 0.52];
+      arr.push(new THREE.Vector3(c[0], c[1], c[2]));
+    }
+    return arr;
+  }
 
   build(rivers: WaterwayDef[], _gameMap: GameMap): void {
     const wb = computeWorldBounds(20);
     const rangeX = wb.maxX - wb.minX;
     const rangeZ = wb.maxZ - wb.minZ;
-    // Bounds: (minX, minZ, 1/rangeX, 1/rangeZ) — shader does UV = (pos - min) * invRange
     this.bounds.set(wb.minX, wb.minZ, 1 / rangeX, 1 / rangeZ);
 
     const data = new Uint8Array(TEX_SIZE * TEX_SIZE * 4);
 
+    // Build river color table (up to 16 rivers)
+    this.riverColors = rivers.slice(0, 16).map(r =>
+      r.color ?? getRiverColor(r.name)
+    );
+
     const worldToTexX = (wx: number) => ((wx - wb.minX) / rangeX) * TEX_SIZE;
     const worldToTexZ = (wz: number) => ((wz - wb.minZ) / rangeZ) * TEX_SIZE;
 
-    for (const river of rivers) {
-      // Convert waypoints to world coords via continuous hex math
+    for (let ri = 0; ri < rivers.length; ri++) {
+      const river = rivers[ri];
+      const riverId = Math.min(ri, 15); // clamp to 0-15
+
+      // Convert waypoints to world coords
       const worldPts = river.points.map(([lon, lat]) => {
         const w = geoToWorld(lon, lat);
         return { x: w.x, z: w.z };
       });
 
-      // 3-pass Chaikin subdivision for smooth curves
+      // Adaptive Chaikin: only subdivide sparse segments
       let pts = worldPts;
-      for (let pass = 0; pass < 3; pass++) {
+      const avgSegLen = pathLength(worldPts) / Math.max(1, worldPts.length - 1);
+      const chaikinPasses = avgSegLen > 100 ? 3 : avgSegLen > 30 ? 1 : 0;
+      for (let pass = 0; pass < chaikinPasses; pass++) {
         pts = chaikinSubdivide(pts);
       }
 
@@ -42,8 +72,9 @@ export class RiverMap {
         z: worldToTexZ(p.z),
       }));
 
-      // River half-width in texels
-      const baseHalfWidth = (river.width * 3.0 * TEX_SIZE) / rangeX;
+      // River half-width in texels: use meter-based width or legacy relative width
+      const widthWorld = river.widthMeters ?? (river.width * 180); // legacy: width*180 ≈ old behavior
+      const baseHalfWidth = (widthWorld / 2) * TEX_SIZE / rangeX;
       const valleyDepth = Math.round((river.valleyDepth ?? 0) * 255);
       const totalLen = pathLength(texPts);
 
@@ -62,9 +93,11 @@ export class RiverMap {
         const flowX = len > 0 ? dx / len : 0;
         const flowZ = len > 0 ? dz / len : 0;
 
-        // Encoded flow direction: [-1,1] -> [0,255]
-        const flowXEnc = Math.round((flowX + 1) * 0.5 * 255);
-        const flowZEnc = Math.round((flowZ + 1) * 0.5 * 255);
+        // Flow angle encoded as 0-255 = 0-360 degrees
+        const flowAngle = Math.atan2(flowZ, flowX);
+        const flowAngleEnc = Math.round(((flowAngle + Math.PI) / (2 * Math.PI)) * 255);
+        // River ID encoded as 0-255 (maps to 0-15 in shader via floor(g * 15/255))
+        const riverIdEnc = Math.round(riverId * (255 / 15));
 
         // Bounding box in texels (with padding)
         const pad = baseHalfWidth + 2;
@@ -104,9 +137,9 @@ export class RiverMap {
             // Take max at confluences
             const idx = (tz * TEX_SIZE + tx) * 4;
             if (mask > data[idx]) {
-              data[idx] = mask;          // R: river mask
-              data[idx + 1] = flowXEnc;  // G: flow direction X
-              data[idx + 2] = flowZEnc;  // B: flow direction Z
+              data[idx] = mask;            // R: river mask
+              data[idx + 1] = riverIdEnc;  // G: river ID (for per-river color lookup)
+              data[idx + 2] = flowAngleEnc;// B: flow direction angle
               data[idx + 3] = valleyDepth; // A: valley depth
             }
           }
