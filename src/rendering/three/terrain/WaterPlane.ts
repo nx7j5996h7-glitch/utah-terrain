@@ -44,22 +44,22 @@ float vnoise(vec2 p) {
 void main() {
   vec3 pos = position;
 
-  // Domain warp for organic wave patterns (scaled for 1:1 metric world)
-  float warpX = vnoise(pos.xz * 0.00034 + uTime * 0.05) * 2.0 - 1.0;
-  float warpZ = vnoise(pos.xz * 0.00034 + vec2(50.0, 80.0) + uTime * 0.04) * 2.0 - 1.0;
-  vec2 warpedPos = pos.xz + vec2(warpX, warpZ) * 500.0;
+  // Domain warp for organic wave patterns
+  float warpX = vnoise(pos.xz * 0.03 + uTime * 0.05) * 2.0 - 1.0;
+  float warpZ = vnoise(pos.xz * 0.03 + vec2(50.0, 80.0) + uTime * 0.04) * 2.0 - 1.0;
+  vec2 warpedPos = pos.xz + vec2(warpX, warpZ) * 6.0;
 
-  // 4 Gerstner waves — calm lake waves (wavelengths in meters)
+  // 4 Gerstner waves — calm lake waves
   vec2 d1 = normalize(vec2(1.0, 0.3));
   vec2 d2 = normalize(vec2(-0.4, 0.9));
   vec2 d3 = normalize(vec2(0.7, -0.7));
   vec2 d4 = normalize(vec2(-0.9, -0.2));
 
   vec3 totalWave = vec3(0.0);
-  totalWave += gerstnerWave(warpedPos, d1, 0.02, 3600.0, 130.0);
-  totalWave += gerstnerWave(warpedPos, d2, 0.015, 2200.0, 107.0);
-  totalWave += gerstnerWave(warpedPos, d3, 0.012, 1340.0, 178.0);
-  totalWave += gerstnerWave(warpedPos, d4, 0.01, 4900.0, 71.0);
+  totalWave += gerstnerWave(warpedPos, d1, 0.02, 40.0, 1.5);
+  totalWave += gerstnerWave(warpedPos, d2, 0.015, 25.0, 1.2);
+  totalWave += gerstnerWave(warpedPos, d3, 0.012, 15.0, 2.0);
+  totalWave += gerstnerWave(warpedPos, d4, 0.01, 55.0, 0.8);
 
   pos += totalWave;
   vWaveHeight = totalWave.y;
@@ -67,15 +67,15 @@ void main() {
   vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
 
   // Analytical normal from wave gradients
-  float eps = 50.0;
-  vec3 wR = gerstnerWave(warpedPos + vec2(eps, 0.0), d1, 0.02, 3600.0, 130.0)
-          + gerstnerWave(warpedPos + vec2(eps, 0.0), d2, 0.015, 2200.0, 107.0);
-  vec3 wL = gerstnerWave(warpedPos - vec2(eps, 0.0), d1, 0.02, 3600.0, 130.0)
-          + gerstnerWave(warpedPos - vec2(eps, 0.0), d2, 0.015, 2200.0, 107.0);
-  vec3 wU = gerstnerWave(warpedPos + vec2(0.0, eps), d1, 0.02, 3600.0, 130.0)
-          + gerstnerWave(warpedPos + vec2(0.0, eps), d2, 0.015, 2200.0, 107.0);
-  vec3 wD = gerstnerWave(warpedPos - vec2(0.0, eps), d1, 0.02, 3600.0, 130.0)
-          + gerstnerWave(warpedPos - vec2(0.0, eps), d2, 0.015, 2200.0, 107.0);
+  float eps = 0.5;
+  vec3 wR = gerstnerWave(warpedPos + vec2(eps, 0.0), d1, 0.02, 40.0, 1.5)
+          + gerstnerWave(warpedPos + vec2(eps, 0.0), d2, 0.015, 25.0, 1.2);
+  vec3 wL = gerstnerWave(warpedPos - vec2(eps, 0.0), d1, 0.02, 40.0, 1.5)
+          + gerstnerWave(warpedPos - vec2(eps, 0.0), d2, 0.015, 25.0, 1.2);
+  vec3 wU = gerstnerWave(warpedPos + vec2(0.0, eps), d1, 0.02, 40.0, 1.5)
+          + gerstnerWave(warpedPos + vec2(0.0, eps), d2, 0.015, 25.0, 1.2);
+  vec3 wD = gerstnerWave(warpedPos - vec2(0.0, eps), d1, 0.02, 40.0, 1.5)
+          + gerstnerWave(warpedPos - vec2(0.0, eps), d2, 0.015, 25.0, 1.2);
   vec3 tangent = normalize(vec3(2.0 * eps, wR.y - wL.y, 0.0));
   vec3 bitangent = normalize(vec3(0.0, wU.y - wD.y, 2.0 * eps));
   vNormal = normalize(cross(bitangent, tangent));
@@ -111,8 +111,8 @@ float pnoise(vec2 p) {
 void main() {
   vec3 normal = normalize(vNormal);
 
-  // Per-pixel ripple perturbation (scaled for 1:1 metric world)
-  float rScale = 0.0017;
+  // Per-pixel ripple perturbation
+  float rScale = 0.15;
   vec2 rUV = vWorldPos.xz * rScale + uTime * vec2(0.3, 0.2);
   float rNx = pnoise(rUV + vec2(0.5, 0.0)) - pnoise(rUV - vec2(0.5, 0.0));
   float rNz = pnoise(rUV + vec2(0.0, 0.5)) - pnoise(rUV - vec2(0.0, 0.5));
@@ -129,11 +129,11 @@ void main() {
   vec3 deepColor = vec3(0.05, 0.18, 0.28);
 
   // Depth-like variation from noise
-  float depthNoise = pnoise(vWorldPos.xz * 0.000056 + uTime * 0.02);
+  float depthNoise = pnoise(vWorldPos.xz * 0.005 + uTime * 0.02);
   vec3 baseColor = mix(shallowColor, deepColor, depthNoise * 0.6 + 0.2);
 
   // Caustic dappling
-  float caustic = pnoise(vWorldPos.xz * 0.0009 + uTime * vec2(0.5, 0.3));
+  float caustic = pnoise(vWorldPos.xz * 0.08 + uTime * vec2(0.5, 0.3));
   caustic *= caustic;
   baseColor += vec3(0.03, 0.05, 0.04) * caustic;
 
@@ -148,8 +148,8 @@ void main() {
   vec3 specular = vec3(1.0, 0.95, 0.85) * (spec1 * 0.6 + spec2 * 0.15);
 
   // Wave-height foam
-  float foam = smoothstep(8.0, 15.0, vWaveHeight) * 0.15;
-  float foamBreak = pnoise(vWorldPos.xz * 0.0034 + uTime * 0.8);
+  float foam = smoothstep(0.08, 0.15, vWaveHeight) * 0.15;
+  float foamBreak = pnoise(vWorldPos.xz * 0.3 + uTime * 0.8);
   foam *= foamBreak;
 
   vec3 finalColor = baseColor + specular + vec3(foam);
@@ -189,7 +189,7 @@ export class WaterPlane {
         if (w.z > maxZ) maxZ = w.z;
       }
 
-      const pad = 5000; // ~5km padding at 1:1 metric scale
+      const pad = 60; // padding for full coverage
       minX -= pad; maxX += pad;
       minZ -= pad; maxZ += pad;
 
@@ -199,16 +199,12 @@ export class WaterPlane {
       const centerZ = (minZ + maxZ) / 2;
 
       // Subdivisions proportional to size, capped for perf
-      const subdiv = Math.min(64, Math.max(8, Math.round(Math.max(width, depth) / 800)));
+      const subdiv = Math.min(64, Math.max(8, Math.round(Math.max(width, depth) / 8)));
       const geometry = new THREE.PlaneGeometry(width, depth, subdiv, subdiv);
       geometry.rotateX(-Math.PI / 2);
 
-      // Position water plane at real elevation (relative to 1280m GSL datum)
-      const BASE_ELEV = 1280; // Great Salt Lake surface = world Y datum
-      const waterY = wb.elevation ? (wb.elevation - BASE_ELEV) : WATER_PLANE_Y;
-
       const mesh = new THREE.Mesh(geometry, this.material);
-      mesh.position.set(centerX, waterY, centerZ);
+      mesh.position.set(centerX, WATER_PLANE_Y, centerZ);
       mesh.frustumCulled = false;
       mesh.renderOrder = 1;
       scene.add(mesh);

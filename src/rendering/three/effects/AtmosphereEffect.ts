@@ -52,8 +52,7 @@ export class AtmosphereEffect {
     this.camera = camera;
     this.skyTexture = createSkyGradientTexture();
 
-    // Sky dome radius must encompass the full 1:1 metric world (~430km)
-    const geo = new THREE.SphereGeometry(500000, 32, 16);
+    const geo = new THREE.SphereGeometry(3000, 32, 16);
     const mat = new THREE.MeshBasicMaterial({
       map: this.skyTexture,
       side: THREE.BackSide,

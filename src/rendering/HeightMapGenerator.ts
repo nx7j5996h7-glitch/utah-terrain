@@ -6,7 +6,7 @@
  * Adapted from Aveneg's HeightMapGenerator for Utah's terrain palette.
  */
 
-import { GLOBAL_TERRAIN_SEED, VERTICAL_EXAGGERATION } from '@/constants';
+import { GLOBAL_TERRAIN_SEED, ELEVATION_SCALE, VERTICAL_EXAGGERATION } from '@/constants';
 import { worldToGeo } from '@/core/geo/GeoCoord';
 import type { TerrainType } from '@/constants';
 import {
@@ -356,18 +356,20 @@ function sampleDesertHeight(worldX: number, worldY: number, terrainType: Terrain
 function sampleRealHeight(worldX: number, worldY: number): number {
   if (!isHeightmapLoaded()) return 0;
 
-  // worldY is the world-Z coordinate passed as -wz from the caller
+  // worldY is pixel-Y (positive south), worldZ = -pixelY
   const geo = worldToGeo(worldX, -worldY);
   const realElev = sampleElevationGeo(geo.lon, geo.lat);
   if (realElev === undefined) return 0;
 
-  // At 1:1 scale: return elevation in meters with vertical exaggeration
-  // Subtract base elevation (GSL at ~1280m) so terrain starts near Y=0
-  const baseElev = 1280; // Great Salt Lake surface level
-  const worldHeight = (realElev - baseElev) * VERTICAL_EXAGGERATION;
+  // Convert meters to world units with exaggeration
+  // Utah relief: 226m to 4354m = 4128m range
+  const normalizedElev = (realElev - 226) / 4128;
 
-  // Add micro-detail noise for surface texture (subtle, in meters)
-  const microNoise = fbm2D(worldX * 0.0005, worldY * 0.0005, SEED, 2) * 5.0;
+  // 8x vertical exaggeration (was 18x — now more realistic proportions)
+  const worldHeight = normalizedElev * ELEVATION_SCALE * VERTICAL_EXAGGERATION;
+
+  // Add micro-detail noise for surface texture (very subtle)
+  const microNoise = fbm2D(worldX * 0.05, worldY * 0.05, SEED, 2) * 0.5;
 
   return worldHeight + microNoise;
 }
@@ -377,19 +379,19 @@ function sampleRealHeight(worldX: number, worldY: number): number {
 // =========================================================================
 
 function sampleCoastPerturb(wx: number, wz: number): { dx: number; dz: number } {
-  const scale = 0.00017;   // ~0.015 / 89 for 1:1 metric scale
-  const strength = 350.0;  // ~4 * 89 for meters
+  const scale = 0.015;
+  const strength = 4.0;
   const dx = (valueNoise2D(wx * scale, wz * scale, SEED + 2000) - 0.5) * strength;
   const dz = (valueNoise2D(wx * scale, wz * scale, SEED + 2100) - 0.5) * strength;
   return { dx, dz };
 }
 
 function sampleColorNoise(wx: number, wz: number): number {
-  return fbm2D(wx * 0.000135, wz * 0.000135, SEED + 3000, 2);
+  return fbm2D(wx * 0.012, wz * 0.012, SEED + 3000, 2);
 }
 
 function sampleFineColorNoise(wx: number, wz: number): number {
-  return valueNoise2D(wx * 0.00045, wz * 0.00045, SEED + 3100);
+  return valueNoise2D(wx * 0.04, wz * 0.04, SEED + 3100);
 }
 
 // =========================================================================

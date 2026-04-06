@@ -59,7 +59,7 @@ export class CameraControls {
     // Pan speed scales with camera HEIGHT (actual Y position, not orbit distance)
     // This matches Aveneg's behavior — high camera = fast pan, low camera = precise
     const camY = Math.max(10, this.threeCamera.camera.position.y);
-    const panSpeed = CAMERA_PAN_SPEED * dtScale * (camY / 8000); // scaled for 1:1 metric
+    const panSpeed = CAMERA_PAN_SPEED * dtScale * (camY / 80);
 
     const rotateSpeed = ROTATE_SPEED * dtScale;
 

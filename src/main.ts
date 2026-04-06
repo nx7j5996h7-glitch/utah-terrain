@@ -178,6 +178,7 @@ async function init(): Promise<void> {
   setLoadingProgress(100, 'Ready');
   dismissLoading();
 
+
   let lastTimestamp = 0;
   function loop(timestamp: number): void {
     const dt = lastTimestamp === 0 ? 1 / 60 : Math.min((timestamp - lastTimestamp) / 1000, 0.1);

@@ -84,7 +84,6 @@ export class ThreeRenderer {
       alpha: false,
       stencil: false,
       depth: true,
-      logarithmicDepthBuffer: true, // required for 1:1 metric scale (near=10, far=1M)
     });
     this.renderer.setPixelRatio(dpr);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -102,7 +101,7 @@ export class ThreeRenderer {
     THREE.ShaderChunk.fog_fragment = /* glsl */ `
       #ifdef USE_FOG
         #ifdef FOG_EXP2
-          float fogDepthShifted = max( 0.0, vFogDepth - 25000.0 );
+          float fogDepthShifted = max( 0.0, vFogDepth - 250.0 );
           float fogFactor = ( 1.0 - exp( - fogDensity * fogDensity * fogDepthShifted * fogDepthShifted ) ) * 0.75;
         #else
           float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
@@ -111,7 +110,7 @@ export class ThreeRenderer {
       #endif
     `;
     // Warm haze matching Utah's clear desert sky with distant dust
-    this.scene.fog = new THREE.FogExp2(0xd0a880, 0.000008); // warm sunset haze for 1:1 world
+    this.scene.fog = new THREE.FogExp2(0xd0a880, 0.0010); // warm sunset haze
 
     this.terrainGroup = new THREE.Group();
     this.terrainGroup.name = 'terrain';

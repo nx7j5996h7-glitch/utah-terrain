@@ -7,28 +7,26 @@ export const UTAH_EAST = -109.05;
 export const UTAH_NORTH = 42.0;
 export const UTAH_SOUTH = 37.0;
 
-// === Terrain Mesh (1:1 metric scale — 1 world unit = 1 meter) ===
-export const GRID_SPACING = 250.0;       // vertex spacing in meters (~4.8M vertices for full map)
-export const VERTICAL_EXAGGERATION = 1.0; // true 1:1 scale — no exaggeration
-export const WATER_PLANE_Y = 0.0;        // datum level for water surfaces
-export const WATER_MESH_Y = -100;        // water tile terrain sinks below water plane (meters)
-
-// Legacy aliases (used by procedural fallback paths)
-export const ELEVATION_SCALE = VERTICAL_EXAGGERATION;
-export const MOUNTAIN_HEIGHT_BOOST = 1.0;  // no additional boost at 1:1 — real data is sufficient
-export const CANYON_DEPTH_SCALE = 1.0;
+// === Terrain Mesh ===
+export const GRID_SPACING = 2.0;       // vertex spacing in world units
+export const ELEVATION_SCALE = 12.0;   // tile elevation → world Y multiplier
+export const VERTICAL_EXAGGERATION = 16.0; // height exaggeration for real heightmap data
+export const MOUNTAIN_HEIGHT_BOOST = 7.0;
+export const CANYON_DEPTH_SCALE = 4.0;
+export const WATER_PLANE_Y = 0.0;    // At zero level
+export const WATER_MESH_Y = -1.5;    // Water tile terrain sinks below water plane
 
 // === Camera ===
-export const CAMERA_MIN_DISTANCE = 500;     // ~500m minimum zoom
-export const CAMERA_MAX_DISTANCE = 800000;  // ~800km to see full map
-export const CAMERA_MIN_POLAR = 0.087;      // ~5 deg from zenith
-export const CAMERA_MAX_POLAR = 1.396;      // ~80 deg from zenith
+export const CAMERA_MIN_DISTANCE = 15;
+export const CAMERA_MAX_DISTANCE = 1400;
+export const CAMERA_MIN_POLAR = 0.087;  // ~5 deg from zenith
+export const CAMERA_MAX_POLAR = 1.396;  // ~80 deg from zenith
 export const CAMERA_PAN_SPEED = 0.25;
 
-// === LOD (distances in meters) ===
-export const SCATTER_LOD_NEAR = 5000;       // 5km — full detail vegetation
-export const SCATTER_LOD_FAR = 15000;        // 15km — simplified vegetation
-export const SCATTER_LOD_UPDATE_THRESHOLD = 500;
+// === LOD ===
+export const SCATTER_LOD_NEAR = 300;
+export const SCATTER_LOD_FAR = 500;
+export const SCATTER_LOD_UPDATE_THRESHOLD = 25;
 
 // === Terrain Types ===
 export type TerrainType =

@@ -13,7 +13,7 @@ export class SceneLighting {
     // Directional sun — warm golden light at ~50° elevation.
     // Position (250, 280, -180) proven good for terrain relief in Aveneg.
     const sun = new THREE.DirectionalLight(0xffeedd, 1.5);
-    sun.position.set(250000, 280000, -180000); // far away for 1:1 metric scale
+    sun.position.set(250, 280, -180);
     scene.add(sun);
 
     // Pre-compute static sun direction

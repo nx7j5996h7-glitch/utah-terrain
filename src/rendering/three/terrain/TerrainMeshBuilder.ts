@@ -41,8 +41,8 @@ import { REGION_TINT, TINT_COLORS } from '@/rendering/RegionalMappings';
 const SEED = GLOBAL_TERRAIN_SEED;
 
 /** Number of chunk columns/rows for spatial partitioning. */
-const CHUNK_COLS = 8;
-const CHUNK_ROWS = 8;
+const CHUNK_COLS = 4;
+const CHUNK_ROWS = 4;
 
 /** Below-water height for water vertices. */
 const WATER_Y = WATER_MESH_Y;
@@ -87,7 +87,7 @@ for (const key of TERRAIN_TYPE_KEYS) {
 
 /** Vertex key for height lookup (quantized to 2 decimal digits). */
 function vertKey(wx: number, wz: number): string {
-  return `${Math.round(wx)},${Math.round(wz)}`;
+  return `${(wx * 100) | 0},${(wz * 100) | 0}`;
 }
 
 // ── Height computation ────────────────────────────────────────────────────────
@@ -149,10 +149,10 @@ function computeVariedColor(
   const secondary = TERRAIN_RGB_SEC[terrain] ?? primary;
   const tertiary = TERRAIN_RGB_TER[terrain] ?? primary;
 
-  // Multi-octave noise for natural palette blending (scaled for 1:1 metric world)
-  const n1 = valueNoise2D(wx * 0.00017, wz * 0.00017, SEED);
-  const n2 = valueNoise2D(wx * 0.00045, wz * 0.00045, SEED + 100);
-  const n3 = valueNoise2D(wx * 0.0011, wz * 0.0011, SEED + 200);
+  // Multi-octave noise for natural palette blending
+  const n1 = valueNoise2D(wx * 0.015, wz * 0.015, SEED);
+  const n2 = valueNoise2D(wx * 0.04, wz * 0.04, SEED + 100);
+  const n3 = valueNoise2D(wx * 0.1, wz * 0.1, SEED + 200);
 
   // Weight each palette
   const w1 = 0.45 + (n1 - 0.5) * 0.25;
@@ -173,7 +173,7 @@ function computeVariedColor(
   // Formation-aware coloring — geological rock type shifts vertex color
   if (formation && FORMATION_COLORS[formation]) {
     const fc = FORMATION_COLORS[formation];
-    const fmNoise = valueNoise2D(wx * 0.00009, wz * 0.00009, SEED + 5000);
+    const fmNoise = valueNoise2D(wx * 0.008, wz * 0.008, SEED + 5000);
     const blendStr = 0.25 + fmNoise * 0.30; // 25-55% organic blend
     r = r * (1 - blendStr) + fc[0] * blendStr;
     g = g * (1 - blendStr) + fc[1] * blendStr;
@@ -197,8 +197,7 @@ function computeVariedColor(
   }
 
   // ── Hillshade: slope-based light/dark from real heightmap ──
-  // Step size in meters — matches GRID_SPACING for smooth hillshade
-  const step = 500.0;
+  const step = 8.0;
   const hL = heightMap.sampleRealHeight(wx - step, -wz) || wy;
   const hR = heightMap.sampleRealHeight(wx + step, -wz) || wy;
   const hU = heightMap.sampleRealHeight(wx, -(wz - step)) || wy;
@@ -232,11 +231,10 @@ function computeVariedColor(
   }
 
   // ── Snow cover: altitude-based with noise-warped treeline ──
-  // At 1:1 scale (no exag): ~3000m real elevation = ~1720m world Y above base datum
   const SNOW_RGB = [0.98, 0.97, 0.96];
-  if ((terrain === 'mountain' || terrain === 'alpine') && wy > 1720) {
-    const snowAmount = Math.min(1, (wy - 1720) / 800);
-    const snowNoise = valueNoise2D(wx * 0.00011, wz * 0.00011, SEED + 7777);
+  if ((terrain === 'mountain' || terrain === 'alpine') && wy > 120) {
+    const snowAmount = Math.min(1, (wy - 120) / 60);
+    const snowNoise = valueNoise2D(wx * 0.01, wz * 0.01, SEED + 7777);
     const snowBlend = snowAmount * (0.5 + snowNoise * 0.5);
     const snowShade = 0.85 + shade * 0.15;
     r = r * (1 - snowBlend) + SNOW_RGB[0] * snowShade * snowBlend;
@@ -400,12 +398,13 @@ export class TerrainMeshBuilder {
         geoCoords[vi * 2 + 1] = geo.lat;
 
         // ── Water ──
-        // Place water vertices at real terrain elevation (slightly below surface)
-        // so lakes sit flush with surrounding terrain, not in deep canyons
+        // Water vertices sit at water plane level (Y=0) — NOT sunken.
+        // This prevents canyon-like cliffs at lake edges.
         if (props.isWater) {
+          let waterY = 0.0;
           const realH = getHeight(wx, -wz, 2, 'desert');
-          // Water surface sits 5m below the real terrain elevation
-          const waterY = realH > 0 ? realH - 5.0 : 0.0;
+          // Clamp: near water plane, never too deep
+          waterY = Math.min(0.0, Math.max(-0.5, realH * 0.02));
           positions[vi * 3 + 1] = waterY;
           terrainTypes[vi] = TERRAIN_INDEX['water'];
           const waterRGB: [number, number, number] = [0.05, 0.18, 0.28];
@@ -443,10 +442,10 @@ export class TerrainMeshBuilder {
 
         // Snow cover
         if (terrain === 'mountain' || terrain === 'alpine') {
-          const snowThreshold = 1720; // ~3000m real elevation at 1:1 scale
+          const snowThreshold = ELEVATION_SCALE * 6;
           if (wy > snowThreshold) {
-            const noiseBreak = valueNoise2D(wx * 0.00022, wz * 0.00022, SEED + 7777);
-            const snowT = Math.min(1, (wy - snowThreshold) / 800);
+            const noiseBreak = valueNoise2D(wx * 0.02, wz * 0.02, SEED + 7777);
+            const snowT = Math.min(1, (wy - snowThreshold) / (ELEVATION_SCALE * 3));
             snowCoverArr[vi] = snowT * (0.6 + noiseBreak * 0.4);
           }
         }
@@ -632,7 +631,7 @@ export class TerrainMeshBuilder {
             // Weight by noise for organic transition
             const wx = positions[vi * 3];
             const wz = positions[vi * 3 + 2];
-            const noise = valueNoise2D(wx * 0.00034, wz * 0.00034, SEED + 4000);
+            const noise = valueNoise2D(wx * 0.03, wz * 0.03, SEED + 4000);
             const w = 0.3 + noise * 0.7;
 
             blendR += nRGB[0] * w;
@@ -671,7 +670,7 @@ export class TerrainMeshBuilder {
       if (props && props.terrain === 'mountain') {
         mtnVertDist[vi] = 0;
         mtnBfsQueue.push(vi);
-      } else if (positions[vi * 3 + 1] > 300.0) { // >300m above datum → foothill zone
+      } else if (positions[vi * 3 + 1] > 3.0) {
         mtnVertDist[vi] = 1;
         mtnBfsQueue.push(vi);
       }
@@ -751,7 +750,7 @@ export class TerrainMeshBuilder {
 
     // ── Step 10: River valley carving ──
     if (this.riverData) {
-      const VALLEY_CENTER_DEPTH = 150.0; // meters — canyon depth carving at 1:1 scale
+      const VALLEY_CENTER_DEPTH = 15.0; // visible against 100+ unit mountains
       const VALLEY_RADIUS_CELLS = 8;
       const VALLEY_WORLD_RADIUS = VALLEY_RADIUS_CELLS * GRID_SPACING; // 8 * 250 = 2000m
       const riverBlend = new Float32Array(totalVerts);
@@ -808,7 +807,7 @@ export class TerrainMeshBuilder {
       }
 
       // Pass 3a: Compute locally-smoothed water Y for river center vertices
-      const WATER_DROP = 50.0; // meters — river surface below surrounding terrain at 1:1
+      const WATER_DROP = 1.4;
       const SMOOTH_RADIUS = 3;
       const waterTargetY = new Float32Array(totalVerts);
       waterTargetY.fill(NaN);
@@ -893,7 +892,7 @@ export class TerrainMeshBuilder {
           riverBlend[vi] = depression > 0.01 ? t * t * coastFade : 0;
         }
 
-        positions[vi * 3 + 1] = Math.max(positions[vi * 3 + 1], -50.0); // don't go below -50m
+        positions[vi * 3 + 1] = Math.max(positions[vi * 3 + 1], -0.6);
       }
 
       // Smooth bank vertices
