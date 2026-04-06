@@ -161,7 +161,12 @@ export function sampleTerrainAt(lon: number, lat: number): TerrainProperties {
     }
 
     // Step 5b: Elevation-based terrain refinement
-    if (terrain === 'desert' || terrain === 'sagebrush') {
+    // Upgrades terrain that shouldn't exist at high elevation.
+    // salt_flat, desert, sagebrush, urban, marsh are wrong above treeline.
+    const lowTerrains: Set<string> = new Set([
+      'salt_flat', 'desert', 'sagebrush', 'urban', 'marsh', 'canyon_floor',
+    ]);
+    if (lowTerrains.has(terrain)) {
       if (isHeightmapLoaded()) {
         const realElev = sampleElevationGeo(lon, lat);
         if (realElev !== undefined) {
@@ -171,7 +176,7 @@ export function sampleTerrainAt(lon: number, lat: number): TerrainProperties {
           } else if (realElev > 2200) {
             terrain = 'mountain';
             elevation = Math.min(12, Math.round(realElev / 350));
-          } else if (realElev > 1800 && terrain === 'desert') {
+          } else if (realElev > 1800 && (terrain === 'desert' || terrain === 'salt_flat')) {
             terrain = 'sagebrush';
             elevation = Math.round(realElev / 400);
           }

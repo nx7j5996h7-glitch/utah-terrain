@@ -170,6 +170,42 @@ export const MOUNTAIN_RANGES: MountainRangeDef[] = [
     ],
   },
 
+  // Silver Island Mountains — east of Bonneville Salt Flats
+  {
+    name: 'Silver Island Mountains',
+    elevation: 7,
+    ridgeAngle: 10,
+    type: 'range',
+    polygon: [
+      [-113.50, 40.85], [-113.32, 40.88], [-113.25, 40.82], [-113.28, 40.72],
+      [-113.38, 40.68], [-113.50, 40.72],
+    ],
+  },
+
+  // Newfoundland Mountains — south of Bonneville Salt Flats
+  {
+    name: 'Newfoundland Mountains',
+    elevation: 6,
+    ridgeAngle: 0,
+    type: 'range',
+    polygon: [
+      [-113.58, 40.58], [-113.45, 40.60], [-113.40, 40.52], [-113.42, 40.42],
+      [-113.52, 40.40], [-113.58, 40.48],
+    ],
+  },
+
+  // Grassy Mountains — southwest of Bonneville
+  {
+    name: 'Grassy Mountains',
+    elevation: 5,
+    ridgeAngle: 0,
+    type: 'range',
+    polygon: [
+      [-113.68, 40.65], [-113.55, 40.68], [-113.52, 40.58], [-113.58, 40.52],
+      [-113.68, 40.55],
+    ],
+  },
+
   // Cedar Mountains — west of Tooele, south of GSL
   {
     name: 'Cedar Mountains',
