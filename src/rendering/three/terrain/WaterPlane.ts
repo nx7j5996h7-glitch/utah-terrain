@@ -203,8 +203,12 @@ export class WaterPlane {
       const geometry = new THREE.PlaneGeometry(width, depth, subdiv, subdiv);
       geometry.rotateX(-Math.PI / 2);
 
+      // Position water plane at real elevation (relative to 1280m GSL datum)
+      const BASE_ELEV = 1280; // Great Salt Lake surface = world Y datum
+      const waterY = wb.elevation ? (wb.elevation - BASE_ELEV) : WATER_PLANE_Y;
+
       const mesh = new THREE.Mesh(geometry, this.material);
-      mesh.position.set(centerX, WATER_PLANE_Y, centerZ);
+      mesh.position.set(centerX, waterY, centerZ);
       mesh.frustumCulled = false;
       mesh.renderOrder = 1;
       scene.add(mesh);

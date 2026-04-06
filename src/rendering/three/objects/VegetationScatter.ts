@@ -353,192 +353,195 @@ function mat(color: string): THREE.MeshLambertMaterial {
 
 // ── Geometry Builders (Detail + LOD for each type) ─────────────────────────
 
-// 0: Conifer — Engelmann spruce / subalpine fir
+// Geometry scale: 1 unit = 1 meter at 1:1 scale
+// Real Utah tree heights: conifer 15-25m, aspen 10-20m, pinyon 4-8m, juniper 5-10m
+
+// 0: Conifer — Engelmann spruce / subalpine fir (~20m tall)
 function buildConiferDetail(): THREE.BufferGeometry {
-  const canopy = new THREE.ConeGeometry(0.4, 2.0, 6);
-  const trunk = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 4);
+  const canopy = new THREE.ConeGeometry(5, 18, 6);
+  const trunk = new THREE.CylinderGeometry(0.8, 0.8, 5, 4);
   return mergeGeometries(
     [canopy, trunk],
     [
-      new THREE.Matrix4().makeTranslation(0, 1.5, 0),
-      new THREE.Matrix4().makeTranslation(0, 0.25, 0),
+      new THREE.Matrix4().makeTranslation(0, 14, 0),
+      new THREE.Matrix4().makeTranslation(0, 2.5, 0),
     ],
   );
 }
 function buildConiferLOD(): THREE.BufferGeometry {
-  return new THREE.ConeGeometry(0.4, 2.5, 4);
+  return new THREE.ConeGeometry(5, 22, 4);
 }
 
-// 1: Aspen — quaking aspen with white bark
+// 1: Aspen — quaking aspen with white bark (~15m tall)
 function buildAspenDetail(): THREE.BufferGeometry {
-  const canopy = new THREE.SphereGeometry(0.3, 6, 4);
-  const trunk = new THREE.CylinderGeometry(0.04, 0.04, 1.5, 5);
+  const canopy = new THREE.SphereGeometry(4, 6, 4);
+  const trunk = new THREE.CylinderGeometry(0.5, 0.5, 12, 5);
   return mergeGeometries(
     [trunk, canopy],
     [
-      new THREE.Matrix4().makeTranslation(0, 0.75, 0),
-      new THREE.Matrix4().makeTranslation(0, 1.75, 0),
+      new THREE.Matrix4().makeTranslation(0, 6, 0),
+      new THREE.Matrix4().makeTranslation(0, 14, 0),
     ],
   );
 }
 function buildAspenLOD(): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(0.3, 4, 3);
+  return new THREE.SphereGeometry(4, 4, 3);
 }
 
-// 2: Pinyon — short, round crown squashed in Y
+// 2: Pinyon — short, round crown (~6m tall)
 function buildPinyonDetail(): THREE.BufferGeometry {
-  const canopy = new THREE.SphereGeometry(0.4, 6, 4);
+  const canopy = new THREE.SphereGeometry(4, 6, 4);
   canopy.scale(1, 0.6, 1);
-  const trunk = new THREE.CylinderGeometry(0.05, 0.05, 0.4, 4);
+  const trunk = new THREE.CylinderGeometry(0.6, 0.6, 3, 4);
   return mergeGeometries(
     [canopy, trunk],
     [
-      new THREE.Matrix4().makeTranslation(0, 0.7, 0),
-      new THREE.Matrix4().makeTranslation(0, 0.2, 0),
+      new THREE.Matrix4().makeTranslation(0, 5.5, 0),
+      new THREE.Matrix4().makeTranslation(0, 1.5, 0),
     ],
   );
 }
 function buildPinyonLOD(): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(0.4, 4, 3);
+  const g = new THREE.SphereGeometry(4, 4, 3);
   g.scale(1, 0.6, 1);
   return g;
 }
 
-// 3: Juniper — gnarled, icosahedron canopy with displacement
+// 3: Juniper — gnarled, icosahedron canopy (~7m tall)
 function buildJuniperDetail(): THREE.BufferGeometry {
-  const canopy = new THREE.IcosahedronGeometry(0.35, 1);
+  const canopy = new THREE.IcosahedronGeometry(4, 1);
   // Displace vertices for gnarled look
   const pos = canopy.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    const noise = Math.sin(x * 12.3) * Math.cos(z * 9.7) * 0.06;
+    const noise = Math.sin(x * 1.5) * Math.cos(z * 1.2) * 0.5;
     pos.setXYZ(i, x + noise, y + noise * 0.5, z + noise);
   }
   canopy.computeVertexNormals();
-  const trunk = new THREE.CylinderGeometry(0.04, 0.06, 0.6, 4);
+  const trunk = new THREE.CylinderGeometry(0.5, 0.7, 5, 4);
   return mergeGeometries(
     [canopy, trunk],
     [
-      new THREE.Matrix4().makeTranslation(0, 0.9, 0),
-      new THREE.Matrix4().makeTranslation(0, 0.3, 0),
-    ],
-  );
-}
-function buildJuniperLOD(): THREE.BufferGeometry {
-  return new THREE.IcosahedronGeometry(0.35, 0);
-}
-
-// 4: Cottonwood — tall, large spherical canopy
-function buildCottonwoodDetail(): THREE.BufferGeometry {
-  const canopy = new THREE.SphereGeometry(0.5, 6, 5);
-  const trunk = new THREE.CylinderGeometry(0.06, 0.06, 2.0, 5);
-  return mergeGeometries(
-    [trunk, canopy],
-    [
-      new THREE.Matrix4().makeTranslation(0, 1.0, 0),
+      new THREE.Matrix4().makeTranslation(0, 7, 0),
       new THREE.Matrix4().makeTranslation(0, 2.5, 0),
     ],
   );
 }
-function buildCottonwoodLOD(): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(0.5, 4, 3);
+function buildJuniperLOD(): THREE.BufferGeometry {
+  return new THREE.IcosahedronGeometry(4, 0);
 }
 
-// 5: Sagebrush — small hemisphere, grey-green
+// 4: Cottonwood — tall, large spherical canopy (~18m tall)
+function buildCottonwoodDetail(): THREE.BufferGeometry {
+  const canopy = new THREE.SphereGeometry(6, 6, 5);
+  const trunk = new THREE.CylinderGeometry(0.8, 0.8, 14, 5);
+  return mergeGeometries(
+    [trunk, canopy],
+    [
+      new THREE.Matrix4().makeTranslation(0, 7, 0),
+      new THREE.Matrix4().makeTranslation(0, 16, 0),
+    ],
+  );
+}
+function buildCottonwoodLOD(): THREE.BufferGeometry {
+  return new THREE.SphereGeometry(6, 4, 3);
+}
+
+// 5: Sagebrush — small hemisphere (~1m tall)
 function buildSagebrushDetail(): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(0.15, 6, 4);
+  const g = new THREE.SphereGeometry(1.2, 6, 4);
   g.scale(1, 0.7, 1);
   return g;
 }
 function buildSagebrushLOD(): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(0.15, 4, 2);
+  const g = new THREE.SphereGeometry(1.2, 4, 2);
   g.scale(1, 0.7, 1);
   return g;
 }
 
-// 6: Rabbitbrush — small sphere, yellow-green
+// 6: Rabbitbrush — small sphere (~0.8m)
 function buildRabbitbrushDetail(): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(0.12, 6, 4);
+  return new THREE.SphereGeometry(1.0, 6, 4);
 }
 function buildRabbitbrushLOD(): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(0.12, 4, 3);
+  return new THREE.SphereGeometry(1.0, 4, 3);
 }
 
-// 7: Cactus — cylinder, dark green
+// 7: Cactus — cylinder (~1.5m tall)
 function buildCactusDetail(): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(0.08, 0.08, 0.5, 6);
+  return new THREE.CylinderGeometry(0.5, 0.5, 1.5, 6);
 }
 function buildCactusLOD(): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(0.08, 0.08, 0.5, 4);
+  return new THREE.CylinderGeometry(0.5, 0.5, 1.5, 4);
 }
 
-// 8: Joshua tree — forked branches + small sphere tips
+// 8: Joshua tree — forked branches (~8m tall)
 function buildJoshuaTreeDetail(): THREE.BufferGeometry {
-  const trunk = new THREE.CylinderGeometry(0.06, 0.08, 1.5, 5);
-  const b1 = new THREE.CylinderGeometry(0.04, 0.04, 0.8, 4);
-  const b2 = new THREE.CylinderGeometry(0.04, 0.04, 0.7, 4);
-  const tip1 = new THREE.SphereGeometry(0.15, 5, 4);
-  const tip2 = new THREE.SphereGeometry(0.12, 5, 4);
-  const mTrunk = new THREE.Matrix4().makeTranslation(0, 0.75, 0);
+  const trunk = new THREE.CylinderGeometry(0.6, 0.8, 6, 5);
+  const b1 = new THREE.CylinderGeometry(0.4, 0.4, 3, 4);
+  const b2 = new THREE.CylinderGeometry(0.4, 0.4, 2.5, 4);
+  const tip1 = new THREE.SphereGeometry(1.2, 5, 4);
+  const tip2 = new THREE.SphereGeometry(1.0, 5, 4);
+  const mTrunk = new THREE.Matrix4().makeTranslation(0, 3, 0);
   const mB1 = new THREE.Matrix4().makeRotationZ(0.6)
-    .multiply(new THREE.Matrix4().makeTranslation(0.2, 1.6, 0));
+    .multiply(new THREE.Matrix4().makeTranslation(1.5, 6.5, 0));
   const mB2 = new THREE.Matrix4().makeRotationZ(-0.5)
-    .multiply(new THREE.Matrix4().makeTranslation(-0.15, 1.5, 0.1));
-  const mT1 = new THREE.Matrix4().makeTranslation(0.5, 1.9, 0);
-  const mT2 = new THREE.Matrix4().makeTranslation(-0.4, 1.8, 0.1);
+    .multiply(new THREE.Matrix4().makeTranslation(-1.2, 6, 0.5));
+  const mT1 = new THREE.Matrix4().makeTranslation(3, 7.5, 0);
+  const mT2 = new THREE.Matrix4().makeTranslation(-2.5, 7, 0.5);
   return mergeGeometries(
     [trunk, b1, b2, tip1, tip2],
     [mTrunk, mB1, mB2, mT1, mT2],
   );
 }
 function buildJoshuaTreeLOD(): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(0.12, 0.08, 2.0, 4);
+  return new THREE.CylinderGeometry(1.2, 0.8, 8, 4);
 }
 
-// 9: Rock — scraped icosahedron, grey or red
+// 9: Rock — scraped icosahedron (~2m)
 function buildRockDetail(): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(0.3, 1);
+  const g = new THREE.IcosahedronGeometry(2, 1);
   const pos = g.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    const scrape = Math.sin(x * 17.1 + y * 5.3) * Math.cos(z * 11.7) * 0.05;
+    const scrape = Math.sin(x * 2.5 + y * 0.8) * Math.cos(z * 1.8) * 0.4;
     pos.setXYZ(i, x + scrape, y * 0.7 + scrape * 0.3, z + scrape);
   }
   g.computeVertexNormals();
   return g;
 }
 function buildRockLOD(): THREE.BufferGeometry {
-  return new THREE.IcosahedronGeometry(0.3, 0);
+  return new THREE.IcosahedronGeometry(2, 0);
 }
 
-// 10: Boulder — larger scraped icosahedron
+// 10: Boulder — larger scraped icosahedron (~4m)
 function buildBoulderDetail(): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(0.6, 1);
+  const g = new THREE.IcosahedronGeometry(4, 1);
   const pos = g.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    const scrape = Math.sin(x * 8.3 + z * 6.1) * Math.cos(y * 7.9) * 0.08;
+    const scrape = Math.sin(x * 1.2 + z * 0.9) * Math.cos(y * 1.1) * 0.6;
     pos.setXYZ(i, x + scrape, y * 0.65 + scrape * 0.2, z + scrape);
   }
   g.computeVertexNormals();
   return g;
 }
 function buildBoulderLOD(): THREE.BufferGeometry {
-  return new THREE.IcosahedronGeometry(0.6, 0);
+  return new THREE.IcosahedronGeometry(4, 0);
 }
 
-// 11: Grass tuft — small flat cone
+// 11: Grass tuft — small flat cone (~0.3m)
 function buildGrassTuftDetail(): THREE.BufferGeometry {
-  return new THREE.ConeGeometry(0.08, 0.15, 5);
+  return new THREE.ConeGeometry(0.6, 0.4, 5);
 }
 function buildGrassTuftLOD(): THREE.BufferGeometry {
-  return new THREE.ConeGeometry(0.08, 0.15, 3);
+  return new THREE.ConeGeometry(0.6, 0.4, 3);
 }
 
 // ── Mesh Definition Map ────────────────────────────────────────────────────

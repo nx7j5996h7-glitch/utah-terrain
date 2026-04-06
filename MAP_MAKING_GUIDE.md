@@ -1,563 +1,548 @@
-# 3D Terrain Map Making Guide — Claude Code Framework
+# Utah 3D Terrain Map — Architecture, Graphics, and Design Guide
 
-A comprehensive guide for creating realistic 3D hex-based terrain maps of any geographic region using Three.js, based on lessons learned from the Aveneg (Middle East) and Utah projects.
+Comprehensive documentation of how the Utah terrain visualization works, its strengths and weaknesses, performance characteristics, and architectural decisions.
 
 ---
 
 ## Table of Contents
 
-1. [Project Setup](#1-project-setup)
-2. [Geographic Data Research](#2-geographic-data-research)
+1. [Architecture Overview](#1-architecture-overview)
+2. [Coordinate System](#2-coordinate-system)
 3. [Real Elevation Data](#3-real-elevation-data)
-4. [Hex Grid System](#4-hex-grid-system)
-5. [Coordinate System](#5-coordinate-system)
-6. [Terrain Mesh Building](#6-terrain-mesh-building)
-7. [Terrain Material & Shaders](#7-terrain-material--shaders)
-8. [Water Rendering](#8-water-rendering)
-9. [Vegetation System](#9-vegetation-system)
-10. [Landmark Sculpting](#10-landmark-sculpting)
-11. [UI & Camera](#11-ui--camera)
-12. [Common Issues & Fixes](#12-common-issues--fixes)
-13. [Performance Guidelines](#13-performance-guidelines)
-14. [Quality Checklist](#14-quality-checklist)
+4. [Terrain Mesh Pipeline](#4-terrain-mesh-pipeline)
+5. [Terrain Material & Shaders](#5-terrain-material--shaders)
+6. [River System](#6-river-system)
+7. [Water Rendering](#7-water-rendering)
+8. [Vegetation System](#8-vegetation-system)
+9. [Landmark Sculpting](#9-landmark-sculpting)
+10. [Camera & Controls](#10-camera--controls)
+11. [Performance Analysis](#11-performance-analysis)
+12. [Visual Options & Tradeoffs](#12-visual-options--tradeoffs)
+13. [Comparison with Aveneg](#13-comparison-with-aveneg)
+14. [Known Issues & Future Work](#14-known-issues--future-work)
 
 ---
 
-## 1. Project Setup
+## 1. Architecture Overview
 
-### Tech Stack
-```
-three ^0.183.2    — 3D rendering
-gsap ^3.14.2      — Camera animations (flyTo, shake)
-simplex-noise     — Procedural noise for terrain detail
-seedrandom        — Deterministic RNG
-@floating-ui/dom  — Tooltip positioning
-vite              — Build tool
-vitest            — Testing
-typescript strict — Type safety
-```
+The map is a Three.js WebGL application rendering the full state of Utah (~429km x 557km) at 1:1 metric scale. Key systems:
+
+- **GeoCoord** — WGS84 (lon/lat) to world-space conversion (1 world unit = 1 meter)
+- **TerrainMeshBuilder** — generates a continuous vertex grid from USGS heightmap data
+- **TerrainMaterial** — GLSL shader with 15 procedural terrain patterns, per-river colors, road overlays
+- **RiverMap** — rasterizes OSM river paths into a 4096x4096 RGBA texture
+- **WaterPlane** — per-lake Gerstner wave water surfaces at real elevations
+- **VegetationScatter** — 12 vegetation types via InstancedMesh with dual LOD tiers
+- **LandmarkSculptor** — 37 iconic Utah landmarks with custom height/tint functions
 
 ### File Structure
 ```
-src/
-  constants.ts              — Grid dimensions, terrain types, colors, formations
-  main.ts                   — Entry point, init sequence
-  core/
-    hex/                    — HexCoord, HexGrid, HexUtils (flat-top axial)
-    map/                    — Tile, GameMap, [Region]MapData
-  data/                     — Geographic data (water, mountains, rivers, cities, parks, etc.)
-  rendering/
-    RealHeightMap.ts        — USGS elevation data loader
-    HeightMapGenerator.ts   — Height sampling (real + procedural micro-detail)
-    ProceduralNoise.ts      — Noise function library
-    RegionalFeatureMap.ts   — Per-tile RGBA feature texture
-    RegionalMappings.ts     — Regional tints and ridge angles
-    three/
-      ThreeRenderer.ts      — Central orchestrator
-      ThreeCamera.ts        — OrbitControls + terrain clamping
-      terrain/
-        TerrainMeshBuilder.ts  — THE most important file: continuous vertex grid
-        TerrainMaterial.ts     — GLSL shader with per-terrain patterns
-        WaterPlane.ts          — Per-lake Gerstner wave water
-        RiverMap.ts            — River rasterization to DataTexture
-        RoadMap.ts             — Road SDF rasterization
-        ShadowBaker.ts         — Baked shadows + AO
-        HeightMapBaker.ts      — Baked heightmap for normals
-      objects/
-        VegetationScatter.ts   — InstancedMesh vegetation with dual LOD
-        CityMarkers.ts         — City labels + markers
-        LandmarkSculptor.ts    — Iconic location terrain sculpting
-      overlays/
-        GridOverlay.ts         — Hex wireframe (G key)
-        MinimapRenderer.ts     — Canvas minimap
-        RegionLabels.ts        — Floating region names
-      effects/
-        SceneLighting.ts       — Sun + ambient + hemisphere
-        AtmosphereEffect.ts    — Gradient sky sphere
-  input/
-    CameraControls.ts       — WASD/QE/FC keyboard controls
-  ui/
-    Tooltip.ts, InfoPanel.ts, SearchPanel.ts, LegendPanel.ts, CompassHUD.ts
-  utils/
-    EventBus.ts
-scripts/
-  fetch-heightmap-rgb.mjs   — Downloads real USGS elevation data
-public/
-  [region]-elevation.png    — RGB-encoded heightmap
-  [region]-elevation-meta.json
+src/core/geo/GeoCoord.ts          — coordinate conversion (the foundation)
+src/core/map/UtahMapData.ts       — continuous terrain sampler (sampleTerrainAt)
+src/core/map/GameMap.ts           — grid-based tile container
+src/rendering/three/terrain/      — mesh builder, material, river/road maps, water
+src/rendering/three/objects/      — vegetation, city markers, landmarks
+src/rendering/three/effects/      — lighting, atmosphere, weather
+src/data/                         — geographic polygon/polyline definitions
 ```
 
 ---
 
-## 2. Geographic Data Research
+## 2. Coordinate System
 
-### What You Need for Any Region
+### 1:1 Metric Projection
 
-Before writing code, research and collect ALL of this data as `[lon, lat]` polygon/polyline arrays:
+The map uses an equirectangular projection centered at Utah's latitude (39.5N):
 
-1. **Political/geographic boundaries** — The bounding box (N/S/E/W in degrees)
-2. **Water bodies** — Lakes, reservoirs, seas as polygons. Include special colors (e.g., pink salt lakes, turquoise mineral lakes)
-3. **Physiographic regions** — Major terrain provinces as polygons with default terrain type. ORDER MATTERS: specific regions before general ones
-4. **Terrain zones** — Sub-region terrain overrides (e.g., salt flats, urban areas, alpine zones)
-5. **Mountain ranges** — Polygons with elevation (0-15), ridge angle (degrees), and type (`range`/`laccolith`/`plateau`)
-6. **Rivers** — Polyline waypoints with width, valleyDepth (0-1), valleyWidth
-7. **Roads** — Polyline waypoints with width and type (interstate/highway/road)
-8. **Cities** — Point locations with population
-9. **Parks/monuments** — Boundary polygons with type
-10. **Geological formations** — Polygons with formation index for shader coloring
-11. **Feature zones** — Polygons for terrain features (hoodoos, slot canyons, forests, etc.)
+```
+METERS_PER_DEG_LON = 111320 * cos(39.5) = ~85,816 m/deg
+METERS_PER_DEG_LAT = 111,320 m/deg
 
-### Data Sources
-- **OpenStreetMap** — boundaries, roads, cities
-- **USGS** — elevation data, geological maps
-- **National Park Service** — park boundaries
-- **Wikipedia/geology references** — formation types, mountain classifications
-- **Google Earth** — visual verification of polygon positions
+geoToWorld(lon, lat):
+  x = (lon - UTAH_WEST) * -85816    (negative = east)
+  z = (UTAH_NORTH - lat) * -111320  (negative = south)
+```
 
-### Critical Rule: Region Ordering
-Place MORE SPECIFIC regions BEFORE more general ones in the array. The map generation pipeline takes the FIRST match. If "Mojave Fringe" is listed after "Great Basin" and Great Basin's polygon contains Mojave Fringe, the Fringe will never be assigned.
+World bounds: X from 0 to ~-429,080 meters, Z from 0 to ~-556,600 meters.
+
+**Strengths:**
+- True metric scale — all distances are real meters
+- Simple linear math — no hex shear or non-orthogonal projection
+- `worldToGeo()` is trivial division (exact inverse)
+- Works with logarithmic depth buffer for the 800km+ far plane
+
+**Weaknesses:**
+- Equirectangular distortion increases at extreme latitudes (negligible for Utah's 5-degree span)
+- All world coordinates are negative (historical sign convention) — can confuse debugging
+- Float32 precision at edges (~5cm at 429,000m) — acceptable for terrain, marginal for sub-centimeter work
+
+### Previous System (removed)
+
+The original system used hex coordinates (q, r) with negated X axis and a non-orthogonal shear in Z. This was removed because:
+1. Hex quantization caused visible texture boundary artifacts
+2. The hex grid served no gameplay purpose (not a game)
+3. 9 different `geoToWorld` functions had to stay synchronized
+4. The sheared coordinate math was error-prone (multiple east/west flip bugs)
 
 ---
 
 ## 3. Real Elevation Data
 
-### Why Real Data Matters
-Procedural noise CANNOT replicate real terrain. A hand-tuned noise function will never produce the Wasatch Fault scarp, the Grand Staircase cliff steps, or Zion Narrows. Real USGS/SRTM data gives you geographically accurate terrain for free.
+### USGS Heightmap
 
-### Fetching Elevation Data
-Use the free AWS Terrain Tiles (Mapzen Terrarium format):
+The terrain uses real USGS/SRTM elevation data stored as an RGB-encoded PNG (`public/utah-elevation.png`):
 
-```bash
-node scripts/fetch-heightmap-rgb.mjs 9  # zoom 9 ≈ 150m/pixel
-```
+- **Resolution:** 2048 x 2560 pixels (zoom level 9)
+- **Encoding:** 16-bit elevation in R*256 + G channels
+- **Elevation range:** 226m (Great Salt Lake bed) to 4354m (Kings Peak)
+- **Coverage:** -114.609 to -108.984 lon, 36.598 to 42.033 lat
 
-**Tile URL**: `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`
+### Height Sampling
 
-**Encoding**: `elevation_meters = (R * 256 + G + B / 256) - 32768`
+`HeightMapGenerator.sampleRealHeight(worldX, worldY)` converts world position to geographic coordinates, samples the heightmap with bilinear interpolation, and returns elevation in meters relative to the GSL datum (1280m).
 
-**Output**: RGB PNG where R*256+G gives 16-bit elevation. Load in browser via canvas, decode R*256+G per pixel.
+**Strengths:**
+- Real topography — every canyon, mesa, and mountain is in the correct position
+- 16-bit precision gives sub-meter elevation accuracy
+- No procedural noise needed for large-scale terrain shape
+- Micro-detail noise added on top for surface texture (5m amplitude)
 
-### Zoom Level Selection
-| Zoom | Resolution | Tiles for 5°×5° | File Size |
-|------|-----------|----------------|-----------|
-| 8    | ~300m     | ~45            | ~3 MB     |
-| 9    | ~150m     | ~80            | ~8 MB     |
-| 10   | ~75m      | ~300           | ~30 MB    |
+**Weaknesses:**
+- Fixed resolution (~107m per texel) — can't resolve features smaller than ~100m
+- Single static file — can't stream higher resolution tiles for close-up viewing
+- ~7.6MB download — significant for initial page load
 
-Zoom 9 is the sweet spot — detailed enough for all major features, small enough to load quickly.
+### Vertical Scale
 
-### Heightmap Integration
-```typescript
-// At runtime, load PNG and decode:
-const imageData = ctx.getImageData(0, 0, img.width, img.height);
-for (let i = 0; i < pixels; i++) {
-  const r = imageData.data[i * 4];
-  const g = imageData.data[i * 4 + 1];
-  elevation16bit[i] = r * 256 + g; // 0-65535
-}
-
-// Sample with bilinear interpolation:
-function sampleElevation(lon, lat) {
-  const u = (lon - bounds.west) / (bounds.east - bounds.west);
-  const v = (bounds.north - lat) / (bounds.north - bounds.south);
-  // bilinear interpolation at (u * width, v * height)
-  return MIN_ELEV + (interpolated / 65535) * RANGE;
-}
-```
-
-### Vertical Exaggeration
-Real terrain relief is too subtle at map scale. Apply 15-20x vertical exaggeration:
-```typescript
-const worldHeight = normalizedElev * ELEVATION_SCALE * 18;
-```
+`VERTICAL_EXAGGERATION = 1.0` — true 1:1 scale. Utah's relief (3453m range) is small compared to the 429km width (0.8% ratio). At map overview distances, mountains appear subtle but realistic.
 
 ---
 
-## 4. Hex Grid System
+## 4. Terrain Mesh Pipeline
 
-### Axial Coordinates (Flat-Top)
-Use flat-top hexagons with axial coordinates (q=column, r=row):
-- `hexToPixel`: `x = size * 1.5 * q`, `y = size * (√3/2 * q + √3 * r)`
-- `pixelToHex`: inverse with cube rounding
+### TerrainMeshBuilder.build()
 
-### Grid Sizing
-- **HEX_SIZE = 20** world units (center to vertex)
-- **Grid dimensions**: At least as many hexes as the reference (Aveneg uses 120×100 = 12,000). More hexes = finer geographic resolution.
-- **Rule of thumb**: Each hex should cover 3-8 km for good detail
+The terrain is generated as a continuous vertex grid with `GRID_SPACING = 250m` between vertices, producing approximately 1716 x 2226 = ~3.8M vertices covering the full state.
 
-### Geo ↔ Hex Conversion
-```typescript
-function geoToHex(lon, lat) {
-  const q = Math.round((lon - REGION_WEST) / DEG_PER_HEX_LON);
-  const r = Math.round((REGION_NORTH - lat) / DEG_PER_HEX_LAT);
-  return { q, r };
-}
-```
+**Pipeline steps:**
 
----
+1. **World bounds** — computed from geographic extent + padding
+2. **Vertex generation** — for each grid vertex:
+   - Convert (wx, wz) to (lon, lat) via `worldToGeo()`
+   - Call `sampleTerrainAt(lon, lat)` for terrain type, region, features
+   - Call `getHeight(wx, -wz, ...)` for elevation from USGS heightmap
+   - Compute vertex color from terrain type + noise + hillshade + formation
+3. **Coastal smoothing** — 8-pass Laplacian smooth on water/land boundary
+4. **Landmark sculpting** — 37 landmarks modify height and color
+5. **Terrain boundary blending** — grid-neighbor color averaging at terrain transitions
+6. **Mountain smoothing** — disabled (real data is smooth enough)
+7. **River valley carving** — CPU-side valley depression using river texture data
+8. **Index buffer** — alternating diagonal split for quad triangulation
+9. **Chunk splitting** — 8x8 spatial chunks for rendering
 
-## 5. Coordinate System
+**Strengths:**
+- Continuous vertex grid eliminates hex-boundary artifacts
+- Direct geographic sampling — terrain types follow real polygon boundaries
+- Real heightmap provides correct elevation everywhere
+- Vertex colors include hillshade, geological formation tinting, snow cover
+- River valley carving creates realistic canyon profiles
 
-### THE MOST CRITICAL SECTION — GET THIS RIGHT FIRST
+**Weaknesses:**
+- Uniform grid — same resolution everywhere, no view-dependent LOD
+- ~3.8M vertices is heavy (borderline for 60fps on M2 Pro)
+- Build time: 3-8 seconds depending on hardware
+- `sampleTerrainAt()` is called per-vertex — polygon containment checks are O(n) per polygon
+- If GRID_SPACING increased for performance, terrain detail degrades everywhere
 
-The coordinate mapping between geographic, hex, pixel, and Three.js coordinates is the #1 source of bugs. Every file that touches coordinates must be consistent.
+### Tessellation Appearance
 
-### The Problem
-Three.js uses Y-up, with camera looking along -Z by default. But with OrbitControls, you can orbit to any angle. The challenge: achieving BOTH north-at-top AND east-on-right simultaneously.
+The triangulated mesh has a visible tessellated/faceted look, especially on steep mountain slopes. This is caused by flat-shaded triangles at 250m spacing.
 
-### The Solution: Negate X
-To get north-at-top with camera at azimuth=PI (south of center, looking north) AND east-on-right:
+**This is actually an interesting aesthetic option.** The tessellation gives the map a stylized, low-poly look reminiscent of strategy game terrain (Civilization, Total War). Some users find it visually appealing.
 
-```
-hexToPixel:  x = -size * 1.5 * q    ← NEGATED
-             y = size * (√3/2 * q + √3 * r)
+**Options for controlling tessellation:**
+- **GRID_SPACING = 250** (current) — visible facets on mountains, smooth deserts. ~3.8M verts.
+- **GRID_SPACING = 400** — more visible tessellation, strategy-game aesthetic. ~1.5M verts. 60fps guaranteed.
+- **GRID_SPACING = 150** — smoother mountains, less visible facets. ~10.5M verts. May drop below 60fps.
+- **GRID_SPACING = 100** — near-smooth. ~23.6M verts. Will not run at 60fps without CDLOD.
+- **flatShading: true** on material — enforces the tessellated look. Currently `flatShading: false`.
+- **Vertex normal smoothing** — the builder computes vertex normals and applies minimum Y bias. Increasing the bias makes normals more upward-facing, reducing steep-face darkening but losing cliff detail.
 
-world:       worldX = pixel.x       (negated, so -x = east)
-             worldZ = -pixel.y      (negated, so -z = south)
-
-camera:      azimuth = PI           (south of center, looking north)
-             screen right = -worldX = +q = east ✓
-             screen top = +worldZ = north ✓
-```
-
-### Consistency Checklist
-EVERY file with geo→world conversion must use:
-```typescript
-x = -HEX_SIZE * 1.5 * q    // NEGATED
-y = HEX_SIZE * (√3/2 * q + √3 * r)
-worldX = x, worldZ = -y
-```
-
-And the inverse (worldToGeo) must negate x:
-```typescript
-q = -wx / (HEX_SIZE * 1.5)  // NEGATED
-```
-
-### Files That Need This
-- HexUtils.ts (hexToPixel, pixelToHex)
-- RiverMap.ts, RoadMap.ts (geoToWorldPixel)
-- CityMarkers.ts, LandmarkSculptor.ts, RegionLabels.ts, WaterPlane.ts (geoToWorld)
-- HeightMapGenerator.ts (worldToGeo)
-- TerrainMeshBuilder.ts (tileCX = pixel.x)
+**Performance impact:** Triangle count scales as `1/GRID_SPACING^2`. Halving spacing = 4x triangles.
 
 ---
 
-## 6. Terrain Mesh Building
+## 5. Terrain Material & Shaders
 
 ### Architecture
-Single continuous vertex grid at GRID_SPACING=2.0 world units. NOT per-hex geometry. Each vertex:
-1. Find which hex tile it belongs to (via pixelToHex)
-2. Sample height from real heightmap
-3. Compute color from terrain type + formation + hillshade + snow
-4. Store terrain type as vertex attribute for shader patterns
 
-### Build Pipeline (14 Steps)
-1. Dispose old chunks
-2. Build tile coordinate lookup (Map<string, number>)
-3. Mountain depth BFS (edge=0 through 1.0 interior)
-4. Find land bounding box
-5. Generate vertex grid (heights from real heightmap)
-6. Coastal smoothing (land vertices near water pulled toward water level)
-7. Landmark sculpting (heightFn + tintFn for iconic locations)
-8. Terrain boundary color blending (noise-perturbed for organic boundaries)
-9. River valley carving
-10. Generate index buffer (alternating diagonal split)
-11. Split into chunks (4×4)
-12. Compute normals
-13. Store height grid for runtime queries
-14. Publish heights to GameMap
+The terrain uses `MeshStandardMaterial` with extensive `onBeforeCompile` injection. This gives us PBR lighting + shadows while adding custom procedural patterns.
 
-### Smoothing Rules with Real Heightmap
-- **Global Laplacian smoothing: 0 passes** — real data is already smooth
-- **Mountain smoothing: 0 passes** — real mountains have correct profiles
-- **Coastal smoothing: 4-8 passes** — needed to transition from real-heightmap land to flat water
-- Rule: NEVER smooth away real geographic features. Only smooth artificial transitions (hex boundaries, water edges).
+### Vertex Shader Additions
+- River bank depression (depress Y near rivers)
+- 2-frequency Gerstner waves on river water surfaces
+- Attribute passthrough (terrainType, terrainBlend, snowCover, coastDist)
 
-### Coastal Land Flattening
-The biggest visual artifact: cliff walls at lake edges where real heightmap land (maybe 40 world units) meets water tiles at -1.5. Fix with aggressive land flattening:
-```typescript
-const COAST_LAND_FLAT_RADIUS = 5; // grid cells
-const flatBlend = 0.9 * flatT * flatT;  // strong
-const baseY = 0.5; // just above water plane
-```
+### Fragment Shader: 15 Terrain Patterns
 
-### Vertex Attributes
-Each vertex needs these attributes for the shader:
-- `terrainType` (float) — which terrain pattern to apply
-- `terrainBlend` (float) — proximity to different terrain (for pattern suppression)
-- `snowCover` (float) — elevation-based snow with noise treeline
-- `coastDist` (float) — distance to water (for moisture effects)
-- `hexCoord` (vec2) — hex coordinates for feature map lookup
+Each terrain type has a unique GLSL pattern:
+
+| Index | Type | Pattern Description |
+|-------|------|-------------------|
+| 0 | salt_flat | Voronoi polygon cracks + gentle undulation |
+| 1 | desert | Dune ridges + heat shimmer |
+| 2 | sagebrush | Rolling hills + bush ID hash |
+| 3 | red_sandstone | Cross-bedding layers + desert varnish + grain |
+| 4 | white_sandstone | Dome swirls + soft grain |
+| 5 | canyon_floor | FBM swirl + oxide stain |
+| 6 | mountain | 5-zone altitude banding + cliff darkening + geological strata |
+| 7 | conifer_forest | Canopy breaks + cottonwood patches near rivers |
+| 8 | alpine | Rock + snow noise |
+| 9 | river_valley | Field patchwork + hedgerow lines |
+| 10 | marsh | Voronoi cracks + reed clusters |
+| 11 | urban | City block grid + material variation |
+| 12 | badlands | Erosion ripples + smooth clay |
+| 13 | lava_field | Basalt flow oxide + rough blocks |
+| 14 | water | (handled by WaterPlane) |
+
+### Noise Scaling
+
+All noise frequencies in the fragment shader use a pre-scaled `wp = vWorldPos.xz * 0.0112` to maintain visual pattern density at 1:1 metric scale. This single scaling factor (1/89) compensates for the ~89x larger world compared to the original coordinate system.
+
+**Strengths:**
+- Rich procedural detail without textures — infinite resolution at any zoom
+- Per-terrain patterns give each region a distinct visual identity
+- Formation-aware coloring (14 geological formations) adds geological realism
+- Snow cover with noise-warped treeline
+- Bump mapping with per-terrain scale and frequency
+
+**Weaknesses:**
+- Complex shader (700+ lines GLSL) — hard to debug, shader compilation time
+- All patterns are procedural — they look "generated" rather than photographic
+- No texture splatting — can't use real satellite imagery
+- Distance-based LOD in shader (octave reduction) can cause visible quality transitions
+- The `wp` scaling factor couples shader math to the coordinate system
+
+### River Overlay
+
+Rivers are rendered as a fragment shader overlay reading the 4096x4096 RiverMap texture:
+
+- **R channel:** river mask (antialiased)
+- **G channel:** river ID (0-15) — indexes into `uRiverColors[16]` uniform array
+- **B channel:** flow angle (0-360 degrees)
+- **A channel:** valley depth (for CPU carving)
+
+Per-river colors match real geology:
+- Colorado/San Juan: muddy red-brown `[0.55, 0.35, 0.17]`
+- Green River: olive-green `[0.45, 0.50, 0.35]`
+- Bear/Weber/Provo: blue-green `[0.15, 0.42, 0.52]`
+- Virgin: milky green-blue `[0.25, 0.55, 0.50]`
+
+Rivers blend at 95% opacity with center darkening for depth appearance.
 
 ---
 
-## 7. Terrain Material & Shaders
+## 6. River System
 
-### Architecture
-MeshStandardMaterial with `onBeforeCompile` GLSL injection. Vertex colors from mesh builder, per-terrain patterns in fragment shader.
+### Data Source
 
-### Vertex Shader
-- Pass all attributes as varyings to fragment
-- River bank depression (terrain Y drops near rivers)
-- Gerstner waves on river surfaces (2-3 waves, distance-faded)
+River paths are fetched from OpenStreetMap via the Overpass API (`scripts/fetch-rivers-osm.mjs`). The script:
 
-### Fragment Shader — Per-Terrain Patterns
-Each terrain type gets a unique visual pattern applied as `colorShift` on vertex colors:
-- Desert: directional dune ridges (sine + noise warp)
-- Mountain: 5-zone altitude coloring + cliff darkening + geological strata
-- Forest: canopy variation + aspen patches
-- Salt flat: voronoi crystal cracks
-- Marsh: animated puddles + mud cracks + reeds
+1. Queries each named river within Utah bounds
+2. Stitches multi-way OSM segments into continuous polylines
+3. Applies adaptive Douglas-Peucker simplification:
+   - General tolerance: 0.001 degrees (~111m)
+   - Meander zones (Dead Horse Point, Goosenecks): 0.0003 degrees (~33m)
+4. Outputs `src/data/rivers-detailed.ts` with 11 rivers, 5504 total waypoints
+
+### Iconic Features
+
+The Dead Horse Point meander (~-109.74, 38.46) — a dramatic 270-degree bend in the Colorado River — should be visible with sufficient detail (~29 texels across at 4096 texture resolution). The Goosenecks of the San Juan (~-109.93, 37.17) similarly span 10-15 texels per meander.
+
+### Valley Carving
+
+Rivers carve valleys into the terrain mesh (TerrainMeshBuilder Step 10):
+- **Center depth:** 150m (visible against ~3000m mountain heights)
+- **Valley radius:** 2000m (8 grid cells at 250m spacing)
+- **Water drop:** 50m below surrounding terrain
+- **BFS flood-fill** for valley distance computation
+
+**Strengths:**
+- Real OSM paths — meanders, confluences, and braids are geographically accurate
+- Per-river colors — Colorado is brown, Bear is blue-green (matches reality)
+- Adaptive simplification preserves iconic features
+- Valley carving creates realistic canyon profiles
+
+**Weaknesses:**
+- 6 rivers failed to fetch from OSM (rate limiting) — San Juan, Weber, Provo, etc. missing from detailed data
+- 4096 texture = ~105m per texel — rivers under 100m wide are subpixel
+- Valley carving is uniform — doesn't respect actual canyon geometry from the heightmap
+- Rivers at 1:1 scale (150m wide Colorado) are only ~1.4 texels wide — barely visible
+- No river geometry mesh — rivers are purely a texture overlay, no 3D water surface
+
+---
+
+## 7. Water Rendering
+
+### Per-Lake Water Planes
+
+Each water body gets its own Three.js plane mesh positioned at its real elevation:
+
+| Lake | Elevation (m) | World Y |
+|------|--------------|---------|
+| Great Salt Lake | 1280 | 0 (datum) |
+| Utah Lake | 1368 | 88 |
+| Bear Lake | 1805 | 525 |
+| Strawberry Reservoir | 2316 | 1036 |
+| Fish Lake | 2713 | 1433 |
+| Lake Powell | 1091 | -189 |
+
+### Gerstner Waves
+
+The water shader uses 4 Gerstner waves with domain warping:
+- Wavelengths: 1340m to 4900m (scaled for 1:1)
+- Steepness: 0.01-0.02 (calm lake waves)
+- Per-pixel ripple normals + Fresnel reflection + caustic dappling
+
+**Strengths:**
+- Per-lake planes at correct elevations — lakes sit flush with surrounding terrain
+- Gerstner waves give realistic wave motion
+- Fully opaque with no transparency artifacts
+- Water vertex Y set to terrain elevation - 5m (prevents deep canyon walls at lake edges)
+
+**Weaknesses:**
+- Water planes are rectangular bounding boxes — they extend beyond actual lake shapes
+- No water mesh geometry (planar only) — no wave interaction with shorelines
+- Shared material for all lakes — can't have per-lake wave parameters
+- Pink GSL north arm color override not applied to the wave shader (only vertex color)
+
+---
+
+## 8. Vegetation System
+
+### 12 Types
+
+| Type | Real Species | Height (m) | Distribution |
+|------|-------------|-----------|--------------|
+| conifer | Engelmann spruce, subalpine fir | 20 | Mountain forests |
+| aspen | Quaking aspen | 15 | High valleys, N-facing slopes |
+| pinyon | Pinyon pine | 6 | Colorado Plateau 1500-2100m |
+| juniper | Utah juniper | 7 | Dry foothills, mesas |
+| cottonwood | Fremont cottonwood | 18 | Riparian corridors |
+| sagebrush | Big sagebrush | 1 | Great Basin dominant |
+| rabbitbrush | Rubber rabbitbrush | 0.8 | Disturbed soils |
+| cactus | Prickly pear, barrel | 1.5 | Low desert |
+| joshua_tree | Joshua tree | 8 | Mojave Fringe only |
+| rock | Rock outcrop | 2 | Mountain, canyon |
+| boulder | Large boulder | 4 | Talus, riverbeds |
+| grass_tuft | Desert grass, cheatgrass | 0.4 | Throughout |
+
+### LOD System
+
+Two-tier InstancedMesh system:
+- **Detail tier** (0-5km): Full 3D geometry (50-200 triangles per instance)
+- **LOD tier** (5-15km): Simplified geometry (6-12 triangles)
+- **Beyond 15km:** Terrain vertex colors provide forest appearance (no instances)
+
+Instance caps: 163,000 total across all types.
+
+**Strengths:**
+- Region-aware density (Mojave gets cactus, High Plateaus boost conifer)
+- Feature overrides (pinyon_juniper, dense_forest/forest/woodland tiers)
+- Riparian boost near waterways
+- Deterministic hash-based placement (consistent across reloads)
+- Spatial grid for efficient LOD updates
+
+**Weaknesses:**
+- At 1:1 scale, 163k instances is sparse — forests look thin
+- No billboard tier (3D → nothing transition is abrupt)
+- No merged static geometry for mid-distance chunks
+- InstancedMesh frustum culling disabled (bounding sphere issues)
+- Tree geometries are simple primitives (cones, spheres) — not photorealistic
+- Sagebrush at 1.2m radius × 30,000 instances = dominant visual element but looks repetitive
+
+---
+
+## 9. Landmark Sculpting
+
+37 iconic Utah locations with custom height and tint functions:
+
+- **Arches NP** — heightFn creates fin-and-arch topography
+- **Bryce Canyon** — hoodoo spire fields
+- **Monument Valley** — flat-topped buttes rising from desert floor
+- **Zion Canyon** — deep V-cut canyon with wall tinting
+- **Bonneville Salt Flats** — perfectly flat white terrain
 - etc.
 
-### Overlay Textures
-- **River map** (2048²): R=mask, G/B=flow direction, A=valley depth
-- **Road map** (2048²): R=SDF distance
-- **Shadow map** (512²): R=shadow, G=AO, B=detail noise
-- **Height map** (1024²): R=normalized height for analytical normals
-
-### Bounds Format
-River and road maps use `(minX, minZ, 1/rangeX, 1/rangeZ)` — shader does `UV = (pos - min) * invRange`.
-Shadow and height maps use `(minX, minZ, maxX, maxZ)` — shader does `UV = (pos - min) / (max - min)`.
-
-### Bump Mapping
-Per-terrain FBM bump with distance fade (500→150 units):
-- Mountain: 0.20 scale (dramatic)
-- Sandstone: 0.12 (cross-bedding)
-- Desert: 0.07 (dune ridges)
-- Urban: 0.03 (subtle)
-
-### Color Transition Quality
-Two layers prevent hex-boundary artifacts:
-1. **Vertex level**: Noise-perturbed blend positions break hexagonal pattern
-2. **Shader level**: `vTerrainBlend` suppresses patterns near boundaries with noise-warped mask
+Applied at build time to the vertex grid (modifies heights + colors directly).
 
 ---
 
-## 8. Water Rendering
+## 10. Camera & Controls
 
-### Per-Lake Water Planes (NOT Full-Map)
-Create individual water planes per water body, sized to bounding box. This prevents water from appearing in valleys/canyons where it shouldn't be.
-
-### Water Shader
-- 4 Gerstner waves (calm lake parameters, not ocean)
-- Domain warping for organic wave patterns
-- Per-pixel ripple normals (4 sine octaves)
-- Fresnel reflection, dual specular
-- Caustic dappling
-- NO distance fade — water must be visible at all zoom levels
-
-### Water Tile Heights
-Terrain mesh places water hex vertices at `WATER_MESH_Y` (below water plane), colored dark to match water plane's deep color. This eliminates the "two different colored water" artifact.
+- **OrbitControls** with azimuth=PI (looking north from south)
+- **Logarithmic depth buffer** — enables near=10, far=1,000,000 without z-fighting
+- **Pan speed** scales with camera altitude: `CAMERA_PAN_SPEED * dt * (camY / 8000)`
+- **Terrain clamping:** camera stays 100m above terrain surface
+- **Compass HUD** — rotates with camera azimuth
+- **Minimap** — 2D canvas overlay showing full state
 
 ---
 
-## 9. Vegetation System
+## 11. Performance Analysis
 
-### Region-Aware Density Tables
-Define vegetation types appropriate to the region. For each terrain type × region combination, set densities per vegetation type.
+### Triangle Budget
 
-### Forest Tiers
-- Dense forest: 14x density, 1.25x scale
-- Forest: 8x density, 1.15x scale  
-- Woodland: 5x density, 1.05x scale
+| Component | Triangles | Draw Calls |
+|-----------|-----------|------------|
+| Terrain chunks (8x8) | ~7.6M | 64 |
+| Detail vegetation | ~3M (15k instances x 200 tri) | 12 |
+| LOD vegetation | ~600k (50k x 12 tri) | 12 |
+| Water planes | ~50k | 14 |
+| City markers | ~2k | ~30 |
+| **Total** | **~11.3M** | **~132** |
 
-### Placement Strategies
-- Forest tiles: grid-based scatter with 70% noise jitter
-- Non-forest: cluster-biased (60% toward natural cluster centers)
-- Validation: skip below water, slope > 50°, above snowline
+### Bottlenecks
 
-### Dual LOD
-- Detail geometry near camera (200-400 vertices per tree)
-- LOD geometry far (12-20 vertices)
-- Spatial grid (100-unit cells) for efficient filtering
+1. **Terrain vertex count** (3.8M verts / 7.6M tris) — largest single cost. GRID_SPACING=250 is the critical parameter.
+2. **Fragment shader complexity** — 15 terrain patterns with noise, bump mapping, river/road overlays. Heavy per-pixel.
+3. **Vegetation instance updates** — CPU-side matrix filling on LOD changes.
+4. **Build time** — 3-8 seconds initial terrain generation (single-threaded JS).
 
-### CRITICAL: Call updateLOD() Every Frame
-The vegetation InstancedMesh matrices are populated in updateLOD(). If this isn't called in the render loop, vegetation is invisible.
+### GRID_SPACING Impact
 
----
+| GRID_SPACING | Vertices | Triangles | Build Time | Visual Quality |
+|-------------|----------|-----------|------------|----------------|
+| 100 | 23.6M | 47.2M | ~30s | Smooth, nearly photographic |
+| 150 | 10.5M | 21.0M | ~15s | Good quality, slight facets on peaks |
+| 250 (current) | 3.8M | 7.6M | ~5s | Visible tessellation on mountains |
+| 400 | 1.5M | 3.0M | ~2s | Strategy-game aesthetic, fast |
+| 600 | 0.66M | 1.3M | ~1s | Low-poly look, very fast |
 
-## 10. Landmark Sculpting
+### Optimization Opportunities
 
-### Civ-Style Exaggerated Features
-Each iconic location gets custom `heightFn` and `tintFn` that modify the terrain mesh vertices within a radius. Features are exaggerated beyond geographic scale to be recognizable from hex-level zoom.
-
-### Examples
-- Canyon: two parallel cliff walls with depressed floor
-- Hoodoo field: procedural Gaussian spires
-- Mesa/butte: flat top with power-8 cliff edges
-- Arch: two pillars with curved bridge
-- Salt flat: negative height (force flat) + crack pattern tint
-
-### Integration Point
-Applied in TerrainMeshBuilder AFTER coastal smoothing, BEFORE mountain Laplacian. Heights go to gridHeights, colors go to the vertex color array.
+1. **CDLOD quadtree terrain** — view-dependent resolution, 50-150 patches visible at any time. Would replace uniform grid with GPU-side heightmap sampling. Major engineering effort but solves the fundamental vertex count problem.
+2. **Heightmap texture streaming** — load high-res tiles near camera, coarse tiles far away. Requires tile pyramid generation from USGS data.
+3. **Web Workers** — move vertex generation to a worker thread. Data transfer overhead (~7.6MB heightmap) partially offsets parallelization gains.
+4. **Noise lookup tables** — pre-compute deterministic noise values into Float32Arrays before the vertex loop. ~5MB memory for ~30% noise evaluation speedup.
+5. **Billboard vegetation tier** — textured quads at 2-10km would fill the gap between 3D instances and terrain color.
 
 ---
 
-## 11. UI & Camera
+## 12. Visual Options & Tradeoffs
 
-### Camera Setup
-- OrbitControls with damping
-- Terrain height clamping (camera stays above terrain)
-- Pan speed scales with camera Y height (not orbit distance)
-- Fog: custom shader chunk, clear nearby, gentle exp² ramp at distance
+### Tessellation Aesthetic
 
-### Labels
-- `depthTest: false, depthWrite: false, renderOrder: 100` — always visible
-- City labels: LOD distance based on population
-- Region labels: visible when zoomed out, hidden close
+The faceted/tessellated look from the triangulated mesh is configurable and is genuinely an aesthetic choice, not purely a quality issue.
 
-### Compass HUD
-Dynamic rotating compass rose, updates with camera azimuth angle.
+**Arguments for visible tessellation (GRID_SPACING >= 400):**
+- Gives the map a stylized, strategic look (Civilization/Total War aesthetic)
+- Smooth performance (1.5M triangles at 400m spacing)
+- Mountains have dramatic angular profiles
+- Color boundaries between terrain types become crisp geometric edges
+- Reminiscent of paper craft or topographic physical models
+- Loads in ~2 seconds
 
----
+**Arguments against (GRID_SPACING <= 200):**
+- More realistic/photographic appearance
+- Smooth mountain ridgelines
+- Less jarring at close zoom distances
+- Better represents real canyon/cliff geometry
+- But: requires CDLOD for 60fps at GRID_SPACING < 200
 
-## 12. Common Issues & Fixes
+**Hybrid approach:** Use GRID_SPACING=400 as the default with a quality toggle. Or implement CDLOD for adaptive resolution (200m near camera, 1000m far away).
 
-### East/West Flip
-**Symptom**: Geographic features appear on wrong side.
-**Cause**: Camera azimuth and world x-axis don't agree.
-**Fix**: Negate x in hexToPixel AND all geoToWorld functions. Use azimuth=PI.
+### Vertical Exaggeration
 
-### Water Bleeding Through Terrain
-**Symptom**: Blue water visible through valley floors.
-**Cause**: Full-map water plane at fixed Y level.
-**Fix**: Per-lake water planes instead of one giant plane.
+Currently `VERTICAL_EXAGGERATION = 1.0` (true 1:1). Options:
 
-### Hex-Shaped Color Boundaries
-**Symptom**: Visible hexagonal color transitions.
-**Fix**: Noise-perturbed blend positions + shader pattern suppression near boundaries.
+| Exaggeration | Kings Peak Height | Visual Effect | Use Case |
+|-------------|-----------------|---------------|----------|
+| 1.0x | 3074m | Realistic but subtle mountains | Geographic accuracy |
+| 2.0x | 6148m | Noticeable relief | Topographic map feel |
+| 3.0x | 9222m | Dramatic mountains | Strategy game aesthetic |
+| 5.0x | 15370m | Exaggerated, stylized | Presentation/poster |
 
-### Frills/Jagged Edges
-**Symptom**: Stepped/jagged terrain features.
-**Cause with procedural heights**: Missing 3-hex quartic kernel interpolation.
-**Cause with real heightmap**: Over-smoothing destroying real features.
-**Fix for real heightmap**: Set smoothing passes to 0. Real SRTM data is already smooth.
+**Recommended:** Dynamic exaggeration based on camera altitude (1x at ground, 3x at overview). Implemented as a vertex shader uniform — no mesh rebuild needed.
 
-### Cliff Walls at Lake Edges
-**Symptom**: Vertical walls between land and water.
-**Cause**: Real heightmap land at 40+ world units, water tiles at -1.5.
-**Fix**: Aggressive coastal land flattening (radius 5, blend 0.9, target just above water).
+### Per-River Colors vs Uniform Blue
 
-### Vegetation Not Showing
-**Symptom**: No trees/bushes despite VegetationScatter being built.
-**Cause**: `updateLOD()` not called in render loop.
-**Fix**: Call `this.updateLOD()` in both `render()` and `renderIfDirty()`.
+**Per-river (current):** Colorado is brown, Bear is blue — matches reality. More educational/accurate.
 
-### Two-Colored Water
-**Symptom**: Terrain water color visible under/around water plane.
-**Cause**: Terrain water vertex color doesn't match water plane deep color.
-**Fix**: Set water vertex color to water plane's deep color (0.05, 0.18, 0.28).
+**Uniform blue:** All rivers same color. Simpler, more "map-like". Less realistic.
 
-### Labels Hidden Behind Terrain
-**Symptom**: City/region names disappear behind mountains.
-**Fix**: `depthTest: false`, `renderOrder: 100` on all sprite materials.
-
-### Shader Uniforms Not Working
-**Symptom**: Overlay textures (river, road, shadow) have no visual effect.
-**Cause**: Uniforms declared in shader but not sampled, OR bounds format mismatch.
-**Fix**: Verify uniform is declared, assigned in onBeforeCompile, AND sampled with texture2D in the fragment shader. Check bounds format matches UV computation.
+The per-river approach is more interesting but requires the river ID encoding in the texture G channel and the `uRiverColors[16]` uniform array.
 
 ---
 
-## 13. Performance Guidelines
+## 13. Comparison with Aveneg
 
-### Mandatory Rules (from Aveneg)
-- **No shadow maps** — use baked shadows/AO instead
-- **Render scale capped at 0.75** — higher gives no visible benefit
-- **DPR capped at 1.5** — no benefit beyond this
-- **Max 4 Gerstner waves** — indistinguishable from 6
-- **frustumCulled = false** on terrain chunks and InstancedMesh — bounding spheres are wrong
-- **Never dispose shared geometries/materials**
-- **Delta-time-scale all per-frame speeds** — consistent behavior on 60/120/240Hz
+Aveneg (Trump: Total War) is the reference project this map was architecturally based on. Key differences:
 
-### Texture Sizes
-- River/road maps: 2048²
-- Shadow/AO: 512²
-- Height map: 1024²
-- Feature map: MAP_WIDTH × MAP_HEIGHT
+### What Utah Does Better
 
-### Dirty-Flag Rendering
-Only re-render when something changed. Track dirty sources: camera, hover, selection, animation, resize. ~95% CPU reduction at idle.
+| Feature | Utah | Aveneg |
+|---------|------|--------|
+| **Elevation data** | Real USGS 16-bit heightmap | Procedural noise only |
+| **Scale** | 1:1 metric (429km x 557km) | Compressed game-scale |
+| **River detail** | OSM data (5504 waypoints) | Hand-authored (~100 points) |
+| **River colors** | Per-river geological colors | Uniform blue |
+| **Geological formations** | 14 formation types with vertex coloring | None |
+| **Landmark sculpting** | 37 custom landmark height/tint functions | Generic |
+| **Coordinate system** | Clean orthogonal metric projection | Hex-based with shear |
+| **Water elevations** | Per-lake real elevations | All at Y=0 |
 
----
+### What Aveneg Does Better
 
-## 14. Quality Checklist
+| Feature | Aveneg | Utah |
+|---------|--------|------|
+| **Game mechanics** | Full strategy game (units, combat, fog of war) | Pure visualization |
+| **LOD terrain** | Chunk-based with multiple resolution tiers | Uniform grid (no LOD) |
+| **Vegetation** | Mature multi-tier with billboards | 2-tier only, no billboards |
+| **Performance** | Optimized for 60fps gameplay | Borderline at full detail |
+| **Hex grid** | Essential for gameplay (movement, combat) | Removed (vestigial) |
+| **Forest rendering** | Merged static chunks at distance | InstancedMesh only |
+| **Build time** | Fast (smaller map) | 3-8 seconds |
 
-Before declaring the map "done", verify:
+### Architectural Similarities
 
-- [ ] TypeScript compiles with zero errors
-- [ ] Vite builds successfully
-- [ ] North is at top of screen, east on right
-- [ ] Geographic features in correct positions (check 5+ known landmarks)
-- [ ] Mountains have dramatic vertical exaggeration
-- [ ] Canyons/valleys are visible depressions
-- [ ] Rivers visible as colored overlay on terrain
-- [ ] Roads visible
-- [ ] Lakes have water planes with waves
-- [ ] No water bleeding through terrain
-- [ ] No cliff walls at lake edges
-- [ ] Vegetation visible and varies with terrain/region
-- [ ] Cities labeled with population-based LOD
-- [ ] Terrain colors match real-world geology
-- [ ] Formation-aware coloring visible (different sandstone types look different)
-- [ ] Hillshade creates visible light/shadow variation
-- [ ] Bump mapping adds surface texture
-- [ ] Fog creates atmospheric depth at distance
-- [ ] WASD pans, Q/E rotates, F/C tilts, scroll zooms
-- [ ] Camera doesn't clip through terrain
-- [ ] Compass HUD rotates correctly
-- [ ] 60fps on target hardware
+Both projects share:
+- MeshStandardMaterial with onBeforeCompile injection
+- Per-terrain GLSL procedural patterns (15 types)
+- InstancedMesh vegetation with spatial grid LOD
+- Gerstner wave water planes
+- Custom fog shader chunk
+- CompassHUD with azimuth rotation
+- River texture overlay system
 
----
+### Key Architectural Difference
 
-## Workflow Summary
-
-1. **Research** geographic data → polygon/polyline arrays
-2. **Fetch** real elevation data from AWS Terrain Tiles
-3. **Set up** hex grid with correct coordinate system (NEGATE X!)
-4. **Generate** map tiles from geographic data (generateMap pipeline)
-5. **Build** terrain mesh from real heightmap + hex tile colors
-6. **Add** shader patterns, river/road overlays, shadow baking
-7. **Add** vegetation, city markers, landmarks
-8. **Polish** camera, fog, labels, compass
-9. **Audit** coordinate consistency, shader wiring, build pipeline order
-10. **Test** visually against real-world reference images
+Aveneg uses hex coordinates as a gameplay foundation — every system (movement, combat, fog of war, territory) depends on discrete hex tiles. Utah removed hex coordinates entirely in favor of continuous geographic sampling because:
+1. No gameplay requires discrete tiles
+2. Hex quantization created visible texture boundary artifacts
+3. Geographic polygons provide more accurate terrain type boundaries
+4. The coordinate math is simpler without hex shear
 
 ---
 
-*Generated from the Utah 3D Terrain Map project, April 2026.*
-*Framework based on Aveneg/Trump:Total War architecture.*
+## 14. Known Issues & Future Work
 
----
+### Known Issues
 
-## Addendum: Lessons Learned (Utah Session)
+1. **6 rivers missing** from OSM data (rate limited during fetch). Re-run `scripts/fetch-rivers-osm.mjs` to retry.
+2. **River texture resolution** at 1:1 scale: 4096 texture covering 429km = ~105m/texel. Rivers under 100m wide are subpixel.
+3. **No CDLOD** — the uniform 250m grid is heavy for real-time rendering. Performance-sensitive users should increase GRID_SPACING.
+4. **Water plane bounding boxes** extend beyond actual lake boundaries.
+5. **Vegetation is sparse** at 1:1 scale — 163k instances covers an area that should have millions of trees.
+6. **No billboard vegetation tier** — trees abruptly disappear at LOD boundary.
 
-### River Terrain Override is a Trap
-Do NOT change hex terrain type along rivers. Rivers in canyon country will create unrealistic bright green bands over rock terrain. Instead:
-- Set only the `waterway` field on tiles near rivers
-- Render rivers as a shader overlay (blue tint) on whatever terrain they cross
-- The river overlay + valley carving handle the visual rendering
+### Future Work (Priority Order)
 
-### Elevation-Based Terrain Refinement
-Hand-drawn region polygons can't cover every mountain slope. Use the real heightmap to refine terrain types:
-- If real elevation > 2800m and tile is desert → conifer_forest
-- If real elevation > 2200m and tile is desert → mountain
-- If real elevation > 1800m and tile is desert → sagebrush
-This requires the heightmap to be loaded BEFORE map generation.
-
-### Valley Carving Depth Must Match Exaggeration
-If mountains are 100-200 world units tall (18x exaggeration), a 2-unit valley is invisible. Valley carving depth should be 10-20+ world units.
-
-### Hillshade Step Size Controls Tessellation Visibility
-A small hillshade step (3 world units) makes every triangle face visible via sharp light/dark changes. Use 8+ world units for smoother hillshade that follows terrain-scale features.
-
-### Per-Lake Water Planes, Not Full-Map
-A single full-map water plane bleeds through every valley and canyon. Create individual water planes per water body from their polygon bounding boxes.
-
-### Water Hex Vertices Must Be at Water Plane Level
-NEVER sink water hex vertices to a fixed negative Y. This creates massive cliff walls at every lake edge. Instead:
-- Water hex vertices: Y = 0 (same as water plane)
-- Coastal land: slopes gently from real heightmap height down to 0
-- Water plane: opaque, renders on top with waves/color, depthWrite=true
-- Result: seamless transition from land into water
+1. **CDLOD quadtree terrain** — the single biggest improvement. Replace uniform grid with camera-distance-adaptive resolution.
+2. **Billboard vegetation tier** — textured quads at 2-10km distance.
+3. **Heightmap tile streaming** — load high-res elevation data near camera.
+4. **River geometry mesh** — 3D water surface for major rivers (not just texture overlay).
+5. **Dynamic vertical exaggeration** — shader uniform, 1x near ground to 3x at overview.
+6. **Terrain forest tinting** — shader-based green tint beyond vegetation render distance.
+7. **Satellite imagery overlay** — optional mode using real satellite tiles.
+8. **Web Worker terrain generation** — move vertex loop off main thread.

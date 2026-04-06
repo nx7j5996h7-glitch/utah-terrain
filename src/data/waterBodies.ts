@@ -9,6 +9,7 @@ export interface WaterBodyDef {
   name: string;
   polygon: [number, number][]; // [lon, lat] pairs
   color?: string;              // override color (e.g. pink, turquoise)
+  elevation?: number;          // real surface elevation in meters above sea level
 }
 
 export const WATER_BODIES: WaterBodyDef[] = [
@@ -18,6 +19,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   //       and should be EXCLUDED (carved out) when rasterizing to tiles.
   {
     name: 'Great Salt Lake South Arm',
+    elevation: 1280,
     polygon: [
       [-112.78, 41.30], [-112.60, 41.30], [-112.40, 41.27], [-112.22, 41.22],
       [-112.10, 41.16], [-112.02, 41.08], [-112.00, 40.98], [-112.02, 40.88],
@@ -31,6 +33,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Pink-tinted from halophilic archaea, north of the causeway.
   {
     name: 'Great Salt Lake North Arm',
+    elevation: 1280,
     color: '#C47088',
     polygon: [
       [-112.78, 41.30], [-112.82, 41.38], [-112.88, 41.48], [-112.92, 41.55],
@@ -45,6 +48,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Largest freshwater lake in Utah, shallow, in Utah Valley.
   {
     name: 'Utah Lake',
+    elevation: 1368,
     color: '#4A7060', // murky olive-brown (shallow, eutrophic freshwater)
     polygon: [
       [-111.86, 40.36], [-111.80, 40.37], [-111.74, 40.35], [-111.71, 40.31],
@@ -59,6 +63,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Straddles UT/ID border. Caribbean-turquoise from suspended calcium carbonate.
   {
     name: 'Bear Lake',
+    elevation: 1805,
     color: '#40B8B0',
     polygon: [
       [-111.38, 42.00], [-111.30, 42.00], [-111.24, 41.98], [-111.20, 41.95],
@@ -73,6 +78,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // side canyons (Escalante Arm, San Juan Arm, etc.).
   {
     name: 'Lake Powell',
+    elevation: 1091,
     color: '#1A4A6A', // deep blue (massive cliff-surrounded reservoir)
     polygon: [
       // Main channel running roughly SW to NE
@@ -90,6 +96,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // On the Green River in NE Utah, extending into Wyoming.
   {
     name: 'Flaming Gorge Reservoir',
+    elevation: 1844,
     polygon: [
       [-109.65, 41.08], [-109.58, 41.06], [-109.52, 41.02], [-109.46, 40.98],
       [-109.42, 40.94], [-109.40, 40.90], [-109.38, 40.86], [-109.40, 40.84],
@@ -102,6 +109,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // High-elevation reservoir (7600 ft) in Wasatch County.
   {
     name: 'Strawberry Reservoir',
+    elevation: 2316,
     polygon: [
       [-111.22, 40.19], [-111.16, 40.18], [-111.10, 40.16], [-111.06, 40.13],
       [-111.05, 40.10], [-111.07, 40.08], [-111.11, 40.08], [-111.16, 40.09],
@@ -113,6 +121,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Near Heber City, Y-shaped reservoir on the Provo River.
   {
     name: 'Jordanelle Reservoir',
+    elevation: 1860,
     polygon: [
       [-111.44, 40.63], [-111.41, 40.62], [-111.39, 40.61], [-111.38, 40.59],
       [-111.39, 40.58], [-111.41, 40.58], [-111.43, 40.59], [-111.45, 40.60],
@@ -124,6 +133,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // In Provo Canyon between Heber and Provo.
   {
     name: 'Deer Creek Reservoir',
+    elevation: 1695,
     polygon: [
       [-111.54, 40.44], [-111.51, 40.43], [-111.49, 40.42], [-111.48, 40.40],
       [-111.49, 40.39], [-111.51, 40.38], [-111.53, 40.39], [-111.55, 40.41],
@@ -135,6 +145,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // High-altitude reservoir (7600 ft) in Carbon County.
   {
     name: 'Scofield Reservoir',
+    elevation: 2316,
     polygon: [
       [-111.14, 39.82], [-111.11, 39.81], [-111.08, 39.79], [-111.07, 39.77],
       [-111.08, 39.75], [-111.10, 39.75], [-111.13, 39.76], [-111.15, 39.78],
@@ -146,6 +157,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Near Duchesne, on the Strawberry River.
   {
     name: 'Starvation Reservoir',
+    elevation: 1742,
     polygon: [
       [-110.50, 40.22], [-110.47, 40.21], [-110.44, 40.19], [-110.42, 40.17],
       [-110.43, 40.16], [-110.46, 40.16], [-110.49, 40.17], [-110.51, 40.19],
@@ -157,6 +169,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Usually a dry playa / ephemeral lake in the Great Basin.
   {
     name: 'Sevier Lake',
+    elevation: 1383,
     polygon: [
       [-113.00, 39.08], [-112.92, 39.08], [-112.87, 39.02], [-112.85, 38.95],
       [-112.86, 38.88], [-112.88, 38.82], [-112.92, 38.80], [-112.98, 38.80],
@@ -168,6 +181,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Diked freshwater reservoir on the eastern shore of GSL.
   {
     name: 'Willard Bay',
+    elevation: 1295,
     polygon: [
       [-112.10, 41.42], [-112.06, 41.42], [-112.03, 41.40], [-112.02, 41.38],
       [-112.04, 41.37], [-112.07, 41.37], [-112.10, 41.39],
@@ -178,6 +192,7 @@ export const WATER_BODIES: WaterBodyDef[] = [
   // Natural mountain lake in Sevier County at ~8800 ft.
   {
     name: 'Fish Lake',
+    elevation: 2713,
     polygon: [
       [-111.73, 38.57], [-111.71, 38.57], [-111.69, 38.56], [-111.68, 38.55],
       [-111.69, 38.53], [-111.71, 38.53], [-111.73, 38.54], [-111.74, 38.56],
