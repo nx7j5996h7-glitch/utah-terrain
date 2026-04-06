@@ -72,9 +72,10 @@ export class RiverMap {
         z: worldToTexZ(p.z),
       }));
 
-      // River half-width in texels: use meter-based width or legacy relative width
-      const widthWorld = river.widthMeters ?? (river.width * 180); // legacy: width*180 ≈ old behavior
-      const baseHalfWidth = (widthWorld / 2) * TEX_SIZE / rangeX;
+      // River half-width in texels
+      // Rivers must be visually exaggerated at this map scale to be visible.
+      // width field (0.3-1.2) controls relative visual prominence.
+      const baseHalfWidth = (river.width * 3.0 * TEX_SIZE) / rangeX;
       const valleyDepth = Math.round((river.valleyDepth ?? 0) * 255);
       const totalLen = pathLength(texPts);
 

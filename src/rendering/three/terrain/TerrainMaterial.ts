@@ -511,8 +511,8 @@ const FRAG_COLOR = /* glsl */ `
           int riverId = int(rvSample.g * 15.0 + 0.5);
           riverId = clamp(riverId, 0, 15);
           vec3 riverColor = uRiverColors[riverId];
-          // Darken center for depth — matches lake appearance
-          riverColor *= 0.65 + 0.35 * (1.0 - rvMask);
+          // Slight center darkening for depth
+          riverColor *= 0.85 + 0.15 * (1.0 - rvMask);
           // Bank zone: darken terrain near river edges
           float bankMask = smoothstep(0.01, 0.15, rvSample.r) * (1.0 - rvMask);
           diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.70, bankMask * 0.5);
