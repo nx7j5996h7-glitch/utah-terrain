@@ -1,6 +1,6 @@
 {
   "name": "utah",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "Geographically accurate 3D terrain visualization of Utah",
   "type": "module",
   "scripts": {

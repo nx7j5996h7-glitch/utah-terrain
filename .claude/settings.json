@@ -1,0 +1,6 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "input=$(cat); ver=$(jq -r '.version' /Users/aaronlandau/Desktop/utah/package.json 2>/dev/null); echo \"Utah Terrain v${ver}\""
+  }
+}
