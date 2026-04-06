@@ -594,67 +594,109 @@ export class TerrainMeshBuilder {
     if (onProgress) onProgress(0.70, 'Sculpting landmarks...');
     if (yieldFn) await yieldFn();
 
-    // ── Step 8: Terrain boundary color blending ──
-    // Check grid neighbors (not hex neighbors) for different terrain types.
-    // Blend vertex colors smoothly across terrain boundaries.
+    // ── Step 8: Wide noise-warped terrain boundary blending ──
+    // Creates organic, irregular transitions between terrain types.
+    // BFS outward from boundaries, then re-sample terrain at noise-perturbed
+    // positions to create irregular, non-straight transition zones.
     {
-      const BLEND_SCALE = 0.60;
+      const BLEND_RADIUS = 8;        // BFS cells outward from boundary
+      const BLEND_WARP_SCALE = 0.04; // noise frequency for position warping
+      const BLEND_WARP_AMP = 12.0;   // world units of position displacement
+      const BLEND_STRENGTH = 0.70;   // max color blend at boundary
+
+      // Pass 1: Find terrain boundary vertices (adjacent to different terrain)
+      const boundaryDist = new Int16Array(totalVerts).fill(-1);
+      const bfsQueue: number[] = [];
 
       for (let row = 1; row < numRows - 1; row++) {
         for (let col = 1; col < numCols - 1; col++) {
           const vi = row * numCols + col;
           if (!vertIsLand[vi]) continue;
-          const props = vertTerrain[vi]!;
-          const ownTerrain = props.terrain;
+          const ownTerrain = vertTerrain[vi]!.terrain;
 
-          // Check 8 grid neighbors for different terrain
-          const neighbors = [
-            vi - 1, vi + 1, vi - numCols, vi + numCols,
-            vi - numCols - 1, vi - numCols + 1,
-            vi + numCols - 1, vi + numCols + 1,
-          ];
-
-          let totalWeight = 0;
-          let blendR = 0, blendG = 0, blendB = 0;
-
-          for (const nvi of neighbors) {
-            if (nvi < 0 || nvi >= totalVerts) continue;
-            if (!vertIsLand[nvi]) continue;
-            const nProps = vertTerrain[nvi];
-            if (!nProps || nProps.terrain === ownTerrain) continue;
-            if (nProps.terrain === 'water') continue;
-
-            const nIdx = TERRAIN_INDEX[nProps.terrain] ?? -1;
-            const nRGB = nIdx >= 0 ? TERRAIN_RGB_BY_IDX[nIdx] : null;
-            if (!nRGB) continue;
-
-            // Weight by noise for organic transition
-            const wx = positions[vi * 3];
-            const wz = positions[vi * 3 + 2];
-            const noise = valueNoise2D(wx * 0.03, wz * 0.03, SEED + 4000);
-            const w = 0.3 + noise * 0.7;
-
-            blendR += nRGB[0] * w;
-            blendG += nRGB[1] * w;
-            blendB += nRGB[2] * w;
-            totalWeight += w;
+          // Check 4-connected neighbors
+          for (const nvi of [vi - 1, vi + 1, vi - numCols, vi + numCols]) {
+            if (nvi < 0 || nvi >= totalVerts || !vertIsLand[nvi]) continue;
+            const nTerrain = vertTerrain[nvi]?.terrain;
+            if (nTerrain && nTerrain !== ownTerrain && nTerrain !== 'water') {
+              boundaryDist[vi] = 0;
+              bfsQueue.push(vi);
+              break;
+            }
           }
+        }
+      }
 
-          if (totalWeight <= 0) continue;
+      // Pass 2: BFS flood outward from boundary
+      let bfsHead = 0;
+      while (bfsHead < bfsQueue.length) {
+        const vi = bfsQueue[bfsHead++];
+        const d = boundaryDist[vi];
+        if (d >= BLEND_RADIUS) continue;
+        const r = Math.floor(vi / numCols);
+        const c = vi % numCols;
+        if (r < 1 || r >= numRows - 1 || c < 1 || c >= numCols - 1) continue;
+        for (const nvi of [vi - 1, vi + 1, vi - numCols, vi + numCols]) {
+          if (nvi >= 0 && nvi < totalVerts && boundaryDist[nvi] < 0 && vertIsLand[nvi]) {
+            boundaryDist[nvi] = d + 1;
+            bfsQueue.push(nvi);
+          }
+        }
+      }
 
-          const avgR = blendR / totalWeight;
-          const avgG = blendG / totalWeight;
-          const avgB = blendB / totalWeight;
+      // Pass 3: For each vertex in blend zone, re-sample terrain at warped position
+      // and blend toward that terrain's color
+      for (let vi = 0; vi < totalVerts; vi++) {
+        const dist = boundaryDist[vi];
+        if (dist < 0 || dist > BLEND_RADIUS) continue;
+        if (!vertIsLand[vi]) continue;
 
-          const blendAmt = Math.min(1, totalWeight / 4) * BLEND_SCALE;
-          terrainBlendArr[vi] = blendAmt;
+        const wx = positions[vi * 3];
+        const wz = positions[vi * 3 + 2];
 
-          colors[vi * 3] = colors[vi * 3] * (1 - blendAmt) + avgR * blendAmt;
-          colors[vi * 3 + 1] = colors[vi * 3 + 1] * (1 - blendAmt) + avgG * blendAmt;
-          colors[vi * 3 + 2] = colors[vi * 3 + 2] * (1 - blendAmt) + avgB * blendAmt;
-          baseColorsArr[vi * 3] = colors[vi * 3];
-          baseColorsArr[vi * 3 + 1] = colors[vi * 3 + 1];
-          baseColorsArr[vi * 3 + 2] = colors[vi * 3 + 2];
+        // Noise-warp the sample position — this breaks the straight polygon edge
+        const warpNx = (valueNoise2D(wx * BLEND_WARP_SCALE, wz * BLEND_WARP_SCALE, SEED + 4000) - 0.5) * BLEND_WARP_AMP;
+        const warpNz = (valueNoise2D(wx * BLEND_WARP_SCALE, wz * BLEND_WARP_SCALE, SEED + 4001) - 0.5) * BLEND_WARP_AMP;
+        // Additional larger-scale warp for macro variation
+        const warpLx = (valueNoise2D(wx * 0.008, wz * 0.008, SEED + 4010) - 0.5) * BLEND_WARP_AMP * 3;
+        const warpLz = (valueNoise2D(wx * 0.008, wz * 0.008, SEED + 4011) - 0.5) * BLEND_WARP_AMP * 3;
+
+        const warpedX = wx + warpNx + warpLx;
+        const warpedZ = wz + warpNz + warpLz;
+
+        // Re-sample terrain at the warped position
+        const warpedGeo = worldToGeo(warpedX, warpedZ);
+        const warpedProps = sampleTerrainAt(warpedGeo.lon, warpedGeo.lat);
+
+        // If the warped sample gives a different terrain, blend toward it
+        const ownTerrain = vertTerrain[vi]!.terrain;
+        if (warpedProps.terrain !== ownTerrain && warpedProps.terrain !== 'water') {
+          const warpedIdx = TERRAIN_INDEX[warpedProps.terrain] ?? -1;
+          const warpedRGB = warpedIdx >= 0 ? TERRAIN_RGB_BY_IDX[warpedIdx] : null;
+          if (warpedRGB) {
+            // Blend strength: strongest at boundary (dist=0), fading outward
+            const t = 1 - dist / BLEND_RADIUS;
+            // Noise modulation so the blend itself is irregular
+            const blendNoise = valueNoise2D(wx * 0.05, wz * 0.05, SEED + 4020);
+            const blendAmt = t * t * BLEND_STRENGTH * (0.5 + blendNoise * 0.5);
+
+            terrainBlendArr[vi] = blendAmt;
+
+            // Also re-compute the warped terrain's full color with variation
+            const warpedTint = REGION_TINT[warpedProps.region] ?? TINT_NONE;
+            const warpedColor = computeVariedColor(
+              warpedX, warpedZ, warpedProps.terrain,
+              warpedProps.elevation, warpedTint, warpedProps.formation,
+              positions[vi * 3 + 1],
+            );
+
+            colors[vi * 3] = colors[vi * 3] * (1 - blendAmt) + warpedColor[0] * blendAmt;
+            colors[vi * 3 + 1] = colors[vi * 3 + 1] * (1 - blendAmt) + warpedColor[1] * blendAmt;
+            colors[vi * 3 + 2] = colors[vi * 3 + 2] * (1 - blendAmt) + warpedColor[2] * blendAmt;
+            baseColorsArr[vi * 3] = colors[vi * 3];
+            baseColorsArr[vi * 3 + 1] = colors[vi * 3 + 1];
+            baseColorsArr[vi * 3 + 2] = colors[vi * 3 + 2];
+          }
         }
       }
     }
